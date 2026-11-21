@@ -56,32 +56,52 @@ export class VisualEngine {
     const stroke:Stroke={mesh,points:[],widths:[],color:(material.uniforms.ink.value as THREE.Color),age:0};
     this.strokes.push(stroke);this.current=stroke;
   }
-  private updateStroke(s:Stroke){
-    const n=s.points.length;if(n<2)return;
-    const positions=new Float32Array(n*6),uvs=new Float32Array(n*4),indices=new Uint32Array((n-1)*6);
-    const tangent=new THREE.Vector3(),side=new THREE.Vector3(),up=new THREE.Vector3(0,1,0);
-    for(let i=0;i<n;i++){
-      tangent.copy(s.points[Math.min(n-1,i+1)]).sub(s.points[Math.max(0,i-1)]).normalize();
-      side.crossVectors(tangent,up).normalize();
-      if(side.lengthSq()<.01)side.set(1,0,0);
-      const w=s.widths[i];
-      for(let k=0;k<2;k++){const j=i*2+k,p=s.points[i].clone().addScaledVector(side,(k?1:-1)*w);
-        positions.set([p.x,p.y,p.z],j*3);uvs.set([i/(n-1),k],j*2);}
-      if(i<n-1){const j=i*2,o=i*6;indices.set([j,j+1,j+2,j+1,j+3,j+2],o);}
-    }
-    const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.BufferAttribute(positions,3));
-    g.setAttribute('uv',new THREE.BufferAttribute(uvs,2));g.setIndex(new THREE.BufferAttribute(indices,1));
-    s.mesh.geometry.dispose();s.mesh.geometry=g;
+  c.restore();
+ }
+ private rgba(hex:string,a:number){const h=hex.replace('#','');return 'rgba('+parseInt(h.slice(0,2),16)+','+parseInt(h.slice(2,4),16)+','+parseInt(h.slice(4,6),16)+','+Math.max(0,Math.min(1,a))+')';}
+ note=(pitch:number,velocity:number)=>{
+  if(this.mode!=='play'||velocity<=0)return;
+  const v=Math.min(1,velocity/127);this.midi=Math.max(this.midi,v);this.noteEnergy=Math.max(this.noteEnergy,v);this.noteAge=0;
+  this.gesture=(pitch%6+6)%6;this.gestureTime=0;
+  this.heading+=(pitch-60)*.008;
+  const c=this.color(),r=7+v*35;
+  this.mark(this.x,this.y,r,c,.26+v*.3,this.gesture);
+  if(v>.55){for(let i=0;i<3+Math.floor(v*8);i++){const a=this.rand()*TAU,dist=this.range(r,r*3);this.mark(this.x+Math.cos(a)*dist,this.y+Math.sin(a)*dist,this.range(1,7),c,.1+v*.16,4);}}
+ };
+ private paint(dt:number,signal:number){
+  this.activeTime+=dt;this.gestureTime+=dt;
+  const t=this.activeTime,low=this.bands.low,mid=this.bands.mid,high=this.bands.high;
+  if(this.gestureTime>2.5&&this.bands.transient>.04){this.gesture=(this.gesture+1+Math.floor(this.rand()*3))%6;this.gestureTime=0;}
+  const curl=Math.sin(t*(.7+high*3)+this.y*.005)*.7+Math.cos(t*.43+this.x*.007)*.45;
+  this.heading+=curl*dt*(.6+this.settings.freedom/100*2);
+  const speed=(20+signal*165)*(this.settings.intensity/100+.4);
+  this.x+=Math.cos(this.heading)*speed*dt;this.y+=Math.sin(this.heading)*speed*dt;
+  const margin=120;if(this.x<margin||this.x>this.logical-margin||this.y<margin||this.y>this.logical-margin){this.heading+=Math.PI*.8;this.x=Math.max(margin,Math.min(this.logical-margin,this.x));this.y=Math.max(margin,Math.min(this.logical-margin,this.y));}
+  const density=Math.max(1,Math.min(3,Math.round(1+this.settings.density/50)));
+  const color=this.color();
+  for(let i=0;i<density;i++){
+   const a=t*([1,2.7,5,1.4,8,3][this.gesture])+i*TAU/density;
+   const spread=[8,42,12,80,65,30][this.gesture]*(1+mid*1.5);
+   const px=this.x+Math.cos(a)*spread,py=this.y+Math.sin(a)*spread;
+   const r=[11,19,4,27,3,13][this.gesture]*(1+low*2.5+this.noteEnergy*.8);
+   const alpha=Math.min(.48,.06+signal*.23+this.noteEnergy*.08);
+   this.mark(px,py,r,color,alpha,this.gesture);
   }
-  private splatter(power:number){
-    const count=Math.min(12,2+Math.floor(power*10));
-    for(let i=0;i<count&&this.drops.length<220;i++){
-      const mat=new THREE.SpriteMaterial({map:this.splashTexture,color:this.color(),transparent:true,opacity:this.range(.2,.7),depthWrite:false});
-      const sprite=new THREE.Sprite(mat);sprite.position.copy(this.tip);
-      sprite.position.add(new THREE.Vector3(this.range(-.4,.4),this.range(-.4,.4),this.range(-.4,.4)));
-      sprite.scale.setScalar(this.range(.03,.23)*(1+power));this.scene.add(sprite);
-      this.drops.push({mesh:sprite,velocity:new THREE.Vector3(this.range(-1,1),this.range(-1,1),this.range(-1,1)).multiplyScalar(.3+power*2),age:0,life:this.range(5,18)});
-    }
+  if(high>.12&&this.rand()<Math.min(.8,high*dt*24))this.mark(this.x+this.range(-90,90),this.y+this.range(-90,90),this.range(1,5),this.color(),.3,4);
+ }
+ private camera(dt:number,active:boolean){
+  if(this.mode==='play'){
+   const t=this.time,level=this.bands.level;
+   const scene=Math.floor(t/7)%5;
+   const base=[1.15,2.1,.75,1.65,1.3][scene];
+   this.targetZoom=base*(1+.2*Math.sin(t*.8)+Math.min(.25,level*.5));
+   this.targetAngle=[0,.13,-.18,.28,-.22][scene]+Math.sin(t*.22)*.09;
+   this.targetX=this.x+Math.sin(t*.32)*[80,160,45,220,120][scene];
+   this.targetY=this.y+Math.cos(t*.26)*[90,100,180,60,130][scene];
+  }else{
+   this.targetZoom=this.shotZoom*(53/this.cameraFov);
+   this.targetAngle=this.shotAngle*Math.PI/180;
+   this.targetX=this.logical/2;this.targetY=this.logical/2;
   }
   private changeGesture(force=false){
     if(!force&&this.gestureAge<.38)return;
