@@ -30,6 +30,30 @@ const fragment=`
  float alpha=uOpacity*border*grain*(.40+.60*edge)*(.83+.17*wash);
  gl_FragColor=vec4(ink,alpha);
  }`;
+
+const watercolorVertex=`
+ varying vec2 vUv;varying float vDepth;
+ void main(){vUv=uv;vec4 mv=modelViewMatrix*vec4(position,1.);vDepth=-mv.z;gl_Position=projectionMatrix*mv;}
+`;
+const watercolorFragment=`
+ precision highp float;
+ varying vec2 vUv;varying float vDepth;
+ uniform vec3 uPigment;uniform float uSeed;uniform float uTime;uniform float uAlpha;
+ float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453123);}
+ float noise(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);return mix(mix(hash(i),hash(i+vec2(1.,0.)),f.x),mix(hash(i+vec2(0.,1.)),hash(i+vec2(1.,1.)),f.x),f.y);}
+ void main(){
+   vec2 uv=vUv;float n=noise(uv*vec2(12.,6.)+uSeed)+.5*noise(uv*vec2(49.,23.)+uSeed*1.7);
+   float gran=noise(uv*vec2(235.,130.)+uSeed*2.1);
+   float wav=sin(uv.x*23.+uSeed*3.)*.035+sin(uv.x*51.+uSeed)*.018;
+   float edge=abs(uv.y-.5)*2.;
+   float mask=1.-smoothstep(.77+wav,.99+wav,edge);
+   float pooling=smoothstep(.69,.98,edge)*(.4+.6*n);
+   float dry=smoothstep(.27,.78,gran+.24*n);
+   float alpha=uAlpha*mask*(.24+.34*n+.22*pooling)*(1.-dry*.48);
+   vec3 pigment=mix(uPigment,vec3(.98),.24*gran+.13*n);
+   pigment=mix(pigment,uPigment*.69,pooling*.48);
+   gl_FragColor=vec4(pigment,clamp(alpha,0.,.56));
+ }`;
 export class VisualEngine{
  canvas:HTMLCanvasElement;settings:Settings;audio=0;midi=0;sustain=false;running=true;
  bands={low:0,mid:0,high:0,level:0,transient:0};background:HTMLImageElement|HTMLVideoElement|null=null;
@@ -42,6 +66,7 @@ export class VisualEngine{
  private camPhase=0;private camClock=0;private camDistance=9;private camFov=52;private shotAngle=0;private shotElevation=0;private shotZoom=1;private printFov=53;
  private pointer:{x:number;y:number}|null=null;private energy=0;private accent=0;private count=0;private lastSignal=0;private idleForm:Form|null=null;
  private paintCanvas=document.createElement('canvas');private paintCtx:CanvasRenderingContext2D|null=null;private paintTexture:THREE.CanvasTexture|null=null;private paintClock=0;private paintStep=0;
+ private watercolorSheets:THREE.Mesh[]=[];private watercolorSeed=Math.random()*100;
  private styleMaterials:THREE.Object3D[]=[];private artStyle=0;private styleSeed=Math.random()*1000;
  private dancers:{tip:THREE.Vector3;trail:THREE.Vector3[];ink:THREE.Line;halo:THREE.Line;head:THREE.Mesh;phase:number}[]=[];
  private dust:THREE.Points|null=null;private dustPositions:Float32Array|null=null;private dustLife=new Float32Array(480);private dustCursor=0;private travel=0;private drawingClock=0;
@@ -185,6 +210,37 @@ export class VisualEngine{
   ctx.beginPath();ctx.ellipse(0,0,radius*1.6,radius*.65,0,0,Math.PI*2);ctx.fill();
   ctx.restore();this.paintTexture.needsUpdate=true;
  }
+ private clearWatercolor(){for(const mesh of this.watercolorSheets){this.scene.remove(mesh);mesh.geometry.dispose();(mesh.material as THREE.Material).dispose();}this.watercolorSheets=[];}
+ private updateWatercolor(){
+  if(this.artStyle!==0)return;
+  const palette=['#467c9a','#cb847f','#c6a46c'];
+  for(let i=0;i<this.dancers.length;i++){
+   const d=this.dancers[i];if(d.trail.length<3)continue;
+   let mesh=this.watercolorSheets[i];
+   if(!mesh){
+    const material=new THREE.ShaderMaterial({vertexShader:watercolorVertex,fragmentShader:watercolorFragment,transparent:true,side:THREE.DoubleSide,depthWrite:false,uniforms:{uPigment:{value:new THREE.Color(palette[i])},uSeed:{value:this.watercolorSeed+i*13.7},uTime:{value:0},uAlpha:{value:.85}}});
+    mesh=new THREE.Mesh(new THREE.BufferGeometry(),material);mesh.frustumCulled=false;mesh.renderOrder=2;this.scene.add(mesh);this.watercolorSheets[i]=mesh;
+   }
+   const trail=d.trail,verts:number[]=[],uv:number[]=[],indices:number[]=[];
+   const rows=9;
+   for(let k=0;k<trail.length;k++){
+    const current=trail[k],prev=trail[Math.max(0,k-1)],next=trail[Math.min(trail.length-1,k+1)];
+    const tangent=next.clone().sub(prev).normalize();
+    const side=new THREE.Vector3(-tangent.y,tangent.x,.35+Math.sin(k*.13+i)*.3).normalize();
+    const progress=k/Math.max(1,trail.length-1);
+    const width=(.52+this.energy*.32)*(.5+.5*Math.sin(progress*Math.PI))*(.8+.2*Math.sin(k*.19+i));
+    for(let j=0;j<rows;j++){
+     const v=j/(rows-1),offset=(v-.5)*2*width;
+     const curl=Math.sin(k*.15+v*8+i*2+this.time*.45)*.13;
+     verts.push(current.x+side.x*offset,current.y+side.y*offset,current.z+side.z*offset+curl);
+     uv.push(progress,v);
+     if(k>0&&j>0){const a=(k-1)*rows+j-1,b=k*rows+j-1;indices.push(a,b,a+1,b,b+1,a+1);}
+    }
+   }
+   const geometry=new THREE.BufferGeometry();geometry.setAttribute('position',new THREE.Float32BufferAttribute(verts,3));geometry.setAttribute('uv',new THREE.Float32BufferAttribute(uv,2));geometry.setIndex(indices);geometry.computeVertexNormals();mesh.geometry.dispose();mesh.geometry=geometry;
+   const uniforms=(mesh.material as THREE.ShaderMaterial).uniforms;uniforms.uTime.value=this.time;uniforms.uAlpha.value=.72+this.energy*.2;
+  }
+ }
  private clearStyleMaterials(){for(const obj of this.styleMaterials){this.scene.remove(obj);obj.traverse(child=>{if(child instanceof THREE.Mesh||child instanceof THREE.Points||child instanceof THREE.Line){child.geometry.dispose();(child.material as THREE.Material).dispose();}});}this.styleMaterials=[];}
  private addStyleObject(obj:THREE.Object3D){this.scene.add(obj);this.styleMaterials.push(obj);}
  private renderStyleMaterial(tip:THREE.Vector3,index:number){
@@ -217,7 +273,7 @@ export class VisualEngine{
   }
   if(this.styleMaterials.length>110){const old=this.styleMaterials.splice(0,1)[0];this.scene.remove(old);old.traverse(child=>{if(child instanceof THREE.Mesh||child instanceof THREE.Points||child instanceof THREE.Line){child.geometry.dispose();(child.material as THREE.Material).dispose();}});}
  }
- setArtStyle=(n:number)=>{this.clearStyleMaterials();this.artStyle=Math.max(0,Math.min(9,Math.round(n)));this.styleSeed=Math.random()*1000;this.travel=0;for(const d of this.dancers){d.trail=[];d.ink.geometry.dispose();d.ink.geometry=new THREE.BufferGeometry();d.halo.geometry.dispose();d.halo.geometry=new THREE.BufferGeometry();}this.dustPositions?.fill(0);this.dustLife.fill(0);if(this.dust)this.dust.geometry.attributes.position.needsUpdate=true;};
+ setArtStyle=(n:number)=>{this.clearWatercolor();this.clearStyleMaterials();this.artStyle=Math.max(0,Math.min(9,Math.round(n)));this.styleSeed=Math.random()*1000;this.travel=0;for(const d of this.dancers){d.trail=[];d.ink.geometry.dispose();d.ink.geometry=new THREE.BufferGeometry();d.halo.geometry.dispose();d.halo.geometry=new THREE.BufferGeometry();}this.dustPositions?.fill(0);this.dustLife.fill(0);if(this.dust)this.dust.geometry.attributes.position.needsUpdate=true;};
  private initChoreography(){
   const colors=['#355b75','#b87869','#bda26e'];
   for(let i=0;i<3;i++){
@@ -257,7 +313,7 @@ export class VisualEngine{
    }
    d.tip.set(x,y,z);d.head.position.copy(d.tip);
    if(this.drawingClock>=.045){
-    this.renderStyleMaterial(d.tip,i);
+    if(this.artStyle!==0)this.renderStyleMaterial(d.tip,i);
     d.trail.push(d.tip.clone());if(d.trail.length>220)d.trail.shift();
     if(d.trail.length>1){
      const g=new THREE.BufferGeometry().setFromPoints(d.trail);d.ink.geometry.dispose();d.ink.geometry=g;const mat=d.ink.material as THREE.LineBasicMaterial;mat.opacity=[.58,.92,.25,.48,.68,.62,.85,.12,.8,.56][this.artStyle];mat.color.set(['#416c81','#1d2931','#8170a8','#587d73','#b67d80','#527e87','#465c76','#b2a0aa','#364954','#a77a8c'][this.artStyle]);
@@ -273,7 +329,7 @@ export class VisualEngine{
     }
    }
   }
-  if(this.drawingClock>=.045){this.drawingClock=0;if(this.dust)this.dust.geometry.attributes.position.needsUpdate=true;}
+  if(this.drawingClock>=.045){this.updateWatercolor();this.drawingClock=0;if(this.dust)this.dust.geometry.attributes.position.needsUpdate=true;}
   if(this.dustPositions){let moved=false;for(let k=0;k<480;k++)if(this.dustLife[k]>0){this.dustLife[k]=Math.max(0,this.dustLife[k]-dt*.1);this.dustPositions[k*3+1]+=dt*.035;moved=true;}if(moved&&this.dust)this.dust.geometry.attributes.position.needsUpdate=true;}
  }
  private loop=(now:number)=>{
@@ -317,6 +373,6 @@ export class VisualEngine{
   }
  };
  exportSheet=(width=3000)=>{const ratios:Record<PaperFormat,number>={square:1,a4p:210/297,a4l:297/210,a3p:297/420,wide:16/9};return this.exportPrint(width,ratios[this.paperConfig.format]);};
- reset=()=>{if(this.paintCtx){this.paintCtx.fillStyle='#ffffff';this.paintCtx.fillRect(0,0,1024,1024);if(this.paintTexture)this.paintTexture.needsUpdate=true;}this.paintStep=0;for(const f of this.forms)this.dispose(f);this.forms=[];this.idleForm=null;this.time=0;this.activeClock=0;this.count=0;this.mode='play';this.running=true;this.camera.position.set(0,2,10);this.focus.set(0,0,0);this.camPhase=0;this.camClock=0;this.travel=0;for(const d of this.dancers){d.trail=[];d.ink.geometry.dispose();d.ink.geometry=new THREE.BufferGeometry();d.halo.geometry.dispose();d.halo.geometry=new THREE.BufferGeometry();}this.clearStyleMaterials();this.dustPositions?.fill(0);this.dustLife.fill(0);this.dustCursor=0;this.drawingClock=0;if(this.dust)this.dust.geometry.attributes.position.needsUpdate=true;};
- destroy=()=>{this.destroyed=true;cancelAnimationFrame(this.raf);this.canvas.removeEventListener('pointerdown',this.down);this.canvas.removeEventListener('pointermove',this.move);this.canvas.removeEventListener('pointerup',this.up);this.canvas.removeEventListener('pointercancel',this.up);this.canvas.removeEventListener('wheel',this.wheel);for(const f of this.forms)this.dispose(f);if(this.backgroundMesh){this.backgroundMesh.geometry.dispose();(this.backgroundMesh.material as THREE.Material).dispose();}this.backgroundTexture?.dispose();this.paintTexture?.dispose();this.clearStyleMaterials();for(const d of this.dancers){for(const obj of [d.ink,d.halo,d.head]){this.scene.remove(obj);obj.geometry.dispose();(obj.material as THREE.Material).dispose();}}if(this.dust){this.scene.remove(this.dust);this.dust.geometry.dispose();(this.dust.material as THREE.Material).dispose();}this.renderer.dispose();};
+ reset=()=>{if(this.paintCtx){this.paintCtx.fillStyle='#ffffff';this.paintCtx.fillRect(0,0,1024,1024);if(this.paintTexture)this.paintTexture.needsUpdate=true;}this.paintStep=0;for(const f of this.forms)this.dispose(f);this.forms=[];this.idleForm=null;this.time=0;this.activeClock=0;this.count=0;this.mode='play';this.running=true;this.camera.position.set(0,2,10);this.focus.set(0,0,0);this.camPhase=0;this.camClock=0;this.travel=0;for(const d of this.dancers){d.trail=[];d.ink.geometry.dispose();d.ink.geometry=new THREE.BufferGeometry();d.halo.geometry.dispose();d.halo.geometry=new THREE.BufferGeometry();}this.clearWatercolor();this.clearStyleMaterials();this.dustPositions?.fill(0);this.dustLife.fill(0);this.dustCursor=0;this.drawingClock=0;if(this.dust)this.dust.geometry.attributes.position.needsUpdate=true;};
+ destroy=()=>{this.destroyed=true;cancelAnimationFrame(this.raf);this.canvas.removeEventListener('pointerdown',this.down);this.canvas.removeEventListener('pointermove',this.move);this.canvas.removeEventListener('pointerup',this.up);this.canvas.removeEventListener('pointercancel',this.up);this.canvas.removeEventListener('wheel',this.wheel);for(const f of this.forms)this.dispose(f);if(this.backgroundMesh){this.backgroundMesh.geometry.dispose();(this.backgroundMesh.material as THREE.Material).dispose();}this.backgroundTexture?.dispose();this.paintTexture?.dispose();this.clearWatercolor();this.clearStyleMaterials();for(const d of this.dancers){for(const obj of [d.ink,d.halo,d.head]){this.scene.remove(obj);obj.geometry.dispose();(obj.material as THREE.Material).dispose();}}if(this.dust){this.scene.remove(this.dust);this.dust.geometry.dispose();(this.dust.material as THREE.Material).dispose();}this.renderer.dispose();};
 }
