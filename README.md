@@ -2,26 +2,27 @@
 
 **Donnez une forme vivante à vos sons.**
 
-Application mobile-first de synthèse picturale audiovisuelle, sans backend ni compte.
+PWA mobile-first en **React 19 + Vite 6 + TypeScript**, moteur Canvas 2D modulaire.
 
-## Utilisation
+## Démarrer
 
-Ouvrir l'application dans Chrome ou Edge sur HTTPS. Appuyer sur **Jouer** pour choisir une source : microphone, piano USB MIDI (si Web MIDI disponible), entrée audio ou fichier audio. **Créer** propose quatre Morphoz (encre, géométrie, aquarelle, filaments), palettes personnalisées, densité, intensité, liberté, caméra, effets et image/vidéo de fond. **Galerie** sauvegarde les presets dans le navigateur.
+```bash
+npm install
+npm run dev
+npm run build
+```
 
-## Déploiement
+Déployer sur Vercel : framework Vite, build `npm run build`, dossier `dist`.
 
-Site statique : déployer la racine du dépôt sur Vercel (Framework Preset: Other, Output Directory: vide) ou GitHub Pages. Le service worker nécessite HTTPS ou localhost. Aucun build requis.
+## Modules
 
-## Limitations connues
+- `src/engine/visual.ts` : quatre univers picturaux, caméra, palette, post-FX.
+- `src/engine/audio.ts` : microphone, entrées audio, fichiers, Web Audio API, sans retour micro.
+- `src/engine/midi.ts` : Web MIDI, vélocité, notes, pédale.
+- `src/storage/presets.ts` : sauvegarde locale et export JSON.
+- `src/App.tsx` : interface Jouer / Créer / Galerie, capture PNG, enregistrement vidéo.
+- `vite-plugin-pwa` : manifest et service worker générés.
 
-- L'USB MIDI dépend du navigateur, des permissions et du périphérique ; iOS Safari ne prend pas en charge Web MIDI de manière générale.
-- Les entrées USB audio ne sont disponibles que si le navigateur les expose comme périphériques d'entrée.
-- La réactivité audio actuelle repose sur l'énergie spectrale globale ; détection de hauteur et timbre avancée à développer.
-- Les presets sont stockés dans localStorage. Les médias importés ne sont pas persistés.
-- L'enregistrement est limité aux codecs pris en charge par MediaRecorder et à la capture Canvas ; la piste audio dépend de la source connectée.
-- Les post-FX sont des effets légers Canvas, pas encore des shaders GPU.
-- Le traitement sonore en sortie (réverbération, delay, etc.) n'est pas encore implémenté.
+## Limitations
 
-## Licence
-
-Aucune licence déclarée à ce stade.
+Web MIDI dépend du navigateur et du matériel. La captation audio USB dépend de l'OS. L'analyse audio actuelle utilise l'énergie spectrale, sans reconnaissance fine des notes. Les médias importés ne sont pas sauvegardés. La vidéo dépend des codecs MediaRecorder du navigateur. Les presets sont stockés en localStorage. Aucun serveur ni compte. Tester sur les appareils cibles avant de qualifier la PWA de prête pour la production.
