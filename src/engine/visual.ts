@@ -10,7 +10,7 @@ void main(){float edge=pow(max(0.,1.-abs(vUv.y*2.-1.)),.55);
 float grain=sin(vUv.x*231.+vUv.y*31.)*sin(vUv.x*79.-vUv.y*97.);
 gl_FragColor=vec4(ink,opacity*edge*(.76+.24*grain));}`;
 export class VisualEngine {
-  canvas: HTMLCanvasElement; settings: Settings; audio=0; midi=0; sustain=false; running=true;
+  canvas: HTMLCanvasElement; settings: Settings; audio=0; midi=0; sustain=false; running=true; bands={low:0,mid:0,high:0,level:0,transient:0};
   background: HTMLImageElement|HTMLVideoElement|null=null;
   mode: Mode='play'; private renderer: THREE.WebGLRenderer; private scene=new THREE.Scene();
   private camera=new THREE.PerspectiveCamera(53,1,.1,1000);
@@ -23,7 +23,7 @@ export class VisualEngine {
   private pointer: {x:number;y:number}|null=null;
   private bgSource: HTMLImageElement|HTMLVideoElement|null=null; private bgTexture:THREE.Texture|null=null;
   private bgMesh:THREE.Mesh|null=null; private destroyed=false;
-  private splashTexture:THREE.CanvasTexture;
+  private splashTexture:THREE.CanvasTexture; private colorCursor=0; private paletteSignature='';
   constructor(canvas:HTMLCanvasElement,settings:Settings){
     this.canvas=canvas;this.settings=settings;
     this.renderer=new THREE.WebGLRenderer({canvas,alpha:false,antialias:true,preserveDrawingBuffer:true,powerPreference:'high-performance'});
@@ -45,7 +45,7 @@ export class VisualEngine {
   resize=()=>{const w=Math.max(1,innerWidth),h=Math.max(1,innerHeight);
     this.renderer.setPixelRatio(Math.min(devicePixelRatio||1,w<700?1.5:2));
     this.renderer.setSize(w,h,false);this.camera.aspect=w/h;this.camera.updateProjectionMatrix();};
-  private color(){const colors=this.settings.colors;return new THREE.Color(colors[Math.floor(this.rand()*colors.length)]||'#365e59');}
+  private color(){const colors=this.settings.colors.filter(c=>/^#[0-9a-fA-F]{6}$/.test(c));if(!colors.length)return new THREE.Color('#365e59');const signature=colors.join(',');if(signature!==this.paletteSignature){this.paletteSignature=signature;this.colorCursor=0;}const index=this.colorCursor++%colors.length;return new THREE.Color(colors[index]);}
   private createStroke(){
     const material=new THREE.ShaderMaterial({vertexShader:VS,fragmentShader:FS,
       uniforms:{ink:{value:this.color()},opacity:{value:.78}},side:THREE.DoubleSide,transparent:true,depthWrite:false});
@@ -93,7 +93,7 @@ export class VisualEngine {
   };
   private paint(dt:number){
     const t=this.time,freedom=this.settings.freedom/100;
-    const curl=new THREE.Vector3(Math.sin(t*.73+this.tip.y*.19),Math.cos(t*.47+this.tip.z*.17),-.9);
+    const curl=new THREE.Vector3(Math.sin(t*(.73+this.bands.high*.5)+this.tip.y*.19),Math.cos(t*(.47+this.bands.mid*.4)+this.tip.z*.17),-.9+this.bands.low*.2);
     this.heading.lerp(curl.normalize(),Math.min(1,dt*(.35+freedom*.9)));
     this.heading.normalize();
     const speed=(.5+this.energy*2.2)*(1+this.settings.intensity/180);
@@ -105,12 +105,12 @@ export class VisualEngine {
       if(!this.current||this.current.points.length>=90)this.createStroke();
       const s=this.current!;
       s.points.push(this.tip.clone());
-      const w=(.012+this.energy*.13+this.pulse*.09)*(.65+.35*Math.sin(t*3));
+      const w=(.012+this.energy*.13+this.pulse*.09+this.bands.low*.14)*(.65+.35*Math.sin(t*3));
       s.widths.push(w);
       this.updateStroke(s);
       this.bounds.expandByPoint(this.tip);
     }
-    if(this.energy>.5&&this.rand()<dt*this.energy*2)this.splatter(this.energy);
+    if((this.energy>.5||this.bands.transient>.08)&&this.rand()<dt*(this.energy*2+this.bands.transient*18))this.splatter(this.energy+this.bands.transient);
   }
   private updateCamera(dt:number){
     if(this.mode==='play'){
@@ -185,7 +185,7 @@ export class VisualEngine {
     const dt=Math.min(.05,(now-(this.last||now))/1000);this.last=now;
     this.syncBackground();
     if(this.mode==='play'&&this.running){
-      this.time+=dt;const target=Math.max(this.audio*3,this.midi,this.sustain?.18:0);
+      this.time+=dt;const target=Math.max(this.audio*3,this.bands.low*.9+this.bands.mid*.8+this.bands.high*.5,this.midi,this.sustain?.18:0);
       this.energy=THREE.MathUtils.damp(this.energy,target,target>this.energy?20:1.1,dt);
       this.midi*=Math.exp(-dt*3);this.pulse*=Math.exp(-dt*14);
       this.paint(dt);
