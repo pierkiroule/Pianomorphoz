@@ -64,7 +64,7 @@ export class VisualEngine {
   const v=Math.min(1,velocity/127);this.midi=Math.max(this.midi,v);this.noteEnergy=Math.max(this.noteEnergy,v);this.noteAge=0;
   this.gesture=(pitch%6+6)%6;this.gestureTime=0;
   this.heading+=(pitch-60)*.008;
-  const c=this.color(),r=7+v*35;
+  const brush=this.brushes[Math.abs(pitch)%Math.max(1,this.brushes.length)]||this.brushes[0];const c=brush?.color||this.color(),r=(7+v*35)*(1+(brush?.water||50)/150);
   this.mark(this.x,this.y,r,c,.26+v*.3,this.gesture);
   if(v>.55){for(let i=0;i<3+Math.floor(v*8);i++){const a=this.rand()*TAU,dist=this.range(r,r*3);this.mark(this.x+Math.cos(a)*dist,this.y+Math.sin(a)*dist,this.range(1,7),c,.1+v*.16,4);}}
  };
@@ -76,16 +76,16 @@ export class VisualEngine {
   this.heading+=curl*dt*(.6+this.settings.freedom/100*2);
   const speed=(20+signal*165)*(this.settings.intensity/100+.4);
   this.x+=Math.cos(this.heading)*speed*dt;this.y+=Math.sin(this.heading)*speed*dt;
-  const margin=120;if(this.x<margin||this.x>this.logical-margin||this.y<margin||this.y>this.logical-margin){this.heading+=Math.PI*.8;this.x=Math.max(margin,Math.min(this.logical-margin,this.x));this.y=Math.max(margin,Math.min(this.logical-margin,this.y));}
+  const margin=80;if(this.x<margin||this.x>this.sheetWidth-margin||this.y<margin||this.y>this.sheetHeight-margin){this.heading+=Math.PI*.8;this.x=Math.max(margin,Math.min(this.sheetWidth-margin,this.x));this.y=Math.max(margin,Math.min(this.sheetHeight-margin,this.y));}
   const density=Math.max(1,Math.min(3,Math.round(1+this.settings.density/50)));
-  const color=this.color();
+  const brush=this.brushes[this.gesture%Math.max(1,this.brushes.length)]||this.brushes[0];const color=brush?.color||this.color();
   for(let i=0;i<density;i++){
    const a=t*([1,2.7,5,1.4,8,3][this.gesture])+i*TAU/density;
    const spread=[8,42,12,80,65,30][this.gesture]*(1+mid*1.5);
    const px=this.x+Math.cos(a)*spread,py=this.y+Math.sin(a)*spread;
-   const r=[11,19,4,27,3,13][this.gesture]*(1+low*2.5+this.noteEnergy*.8);
+   const kind=brush?.kind||'wash';const kindScale:Record<BrushKind,number>={wash:1.7,calligraphy:.55,filament:.2,bloom:1.9,splatter:.3,petal:1.15};const r=[11,19,4,27,3,13][this.gesture]*(1+low*2.5+this.noteEnergy*.8)*(1+(brush?.water||50)/170)*kindScale[kind];
    const alpha=Math.min(.48,.06+signal*.23+this.noteEnergy*.08);
-   this.mark(px,py,r,color,alpha,this.gesture);
+   this.mark(px,py,r,color,alpha,kind==='filament'||kind==='calligraphy'?2:kind==='bloom'?3:this.gesture);
   }
   if(high>.12&&this.rand()<Math.min(.8,high*dt*24))this.mark(this.x+this.range(-90,90),this.y+this.range(-90,90),this.range(1,5),this.color(),.3,4);
  }
@@ -101,7 +101,7 @@ export class VisualEngine {
   }else{
    this.targetZoom=this.shotZoom*(53/this.cameraFov);
    this.targetAngle=this.shotAngle*Math.PI/180;
-   this.targetX=this.logical/2;this.targetY=this.logical/2;
+   this.targetX=this.sheetWidth/2;this.targetY=this.sheetHeight/2;
   }
   private changeGesture(force=false){
     if(!force&&this.gestureAge<.38)return;
