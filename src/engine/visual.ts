@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import {Morphogenesis} from './morphogenesis';
 import type {Settings} from './types';
 export type PaperFormat='square'|'a4p'|'a4l'|'a3p'|'wide';
 export type PaperTexture='cotton'|'smooth'|'washi';
@@ -66,6 +67,7 @@ export class VisualEngine{
  private camPhase=0;private camClock=0;private camDistance=9;private camFov=52;private shotAngle=0;private shotElevation=0;private shotZoom=1;private printFov=53;
  private pointer:{x:number;y:number}|null=null;private energy=0;private accent=0;private count=0;private lastSignal=0;private idleForm:Form|null=null;
  private paintCanvas=document.createElement('canvas');private paintCtx:CanvasRenderingContext2D|null=null;private paintTexture:THREE.CanvasTexture|null=null;private paintClock=0;private paintStep=0;
+ private morphogenesis:Morphogenesis|null=null;
  private watercolorSheets:THREE.Mesh[]=[];private watercolorSeed=Math.random()*100;
  private styleMaterials:THREE.Object3D[]=[];private artStyle=0;private styleSeed=Math.random()*1000;
  private dancers:{tip:THREE.Vector3;trail:THREE.Vector3[];ink:THREE.Line;halo:THREE.Line;head:THREE.Mesh;phase:number}[]=[];
@@ -83,7 +85,7 @@ export class VisualEngine{
   canvas.addEventListener('pointerdown',this.down);canvas.addEventListener('pointermove',this.move);
   canvas.addEventListener('pointerup',this.up);canvas.addEventListener('pointercancel',this.up);
   canvas.addEventListener('wheel',this.wheel,{passive:false});
-  this.resize();this.initChoreography();this.raf=requestAnimationFrame(this.loop);
+  this.resize();this.initChoreography();this.morphogenesis=new Morphogenesis(this.scene);this.applyVisualMode();this.raf=requestAnimationFrame(this.loop);
  }
  private rand(){this.seed=(Math.imul(this.seed,1664525)+1013904223)>>>0;return this.seed/4294967296;}
  private range(a:number,b:number){return a+(b-a)*this.rand();}
@@ -273,7 +275,8 @@ export class VisualEngine{
   }
   if(this.styleMaterials.length>110){const old=this.styleMaterials.splice(0,1)[0];this.scene.remove(old);old.traverse(child=>{if(child instanceof THREE.Mesh||child instanceof THREE.Points||child instanceof THREE.Line){child.geometry.dispose();(child.material as THREE.Material).dispose();}});}
  }
- setArtStyle=(n:number)=>{this.clearWatercolor();this.clearStyleMaterials();this.artStyle=Math.max(0,Math.min(9,Math.round(n)));this.styleSeed=Math.random()*1000;this.travel=0;for(const d of this.dancers){d.trail=[];d.ink.geometry.dispose();d.ink.geometry=new THREE.BufferGeometry();d.halo.geometry.dispose();d.halo.geometry=new THREE.BufferGeometry();}this.dustPositions?.fill(0);this.dustLife.fill(0);if(this.dust)this.dust.geometry.attributes.position.needsUpdate=true;};
+ private applyVisualMode(){const organic=this.artStyle===0;for(const d of this.dancers){d.ink.visible=!organic;d.halo.visible=!organic;d.head.visible=!organic;}if(this.dust)this.dust.visible=!organic;if(this.morphogenesis){this.morphogenesis.dispose();this.morphogenesis=null;}if(organic)this.morphogenesis=new Morphogenesis(this.scene);}
+ setArtStyle=(n:number)=>{this.clearWatercolor();this.clearStyleMaterials();this.artStyle=Math.max(0,Math.min(9,Math.round(n)));this.styleSeed=Math.random()*1000;this.travel=0;for(const d of this.dancers){d.trail=[];d.ink.geometry.dispose();d.ink.geometry=new THREE.BufferGeometry();d.halo.geometry.dispose();d.halo.geometry=new THREE.BufferGeometry();}this.dustPositions?.fill(0);this.dustLife.fill(0);if(this.dust)this.dust.geometry.attributes.position.needsUpdate=true;this.applyVisualMode();};
  private initChoreography(){
   const colors=['#355b75','#b87869','#bda26e'];
   for(let i=0;i<3;i++){
@@ -329,7 +332,7 @@ export class VisualEngine{
     }
    }
   }
-  if(this.drawingClock>=.045){this.updateWatercolor();this.drawingClock=0;if(this.dust)this.dust.geometry.attributes.position.needsUpdate=true;}
+  if(this.drawingClock>=.045){if(this.artStyle!==0)this.updateWatercolor();this.drawingClock=0;if(this.dust)this.dust.geometry.attributes.position.needsUpdate=true;}
   if(this.dustPositions){let moved=false;for(let k=0;k<480;k++)if(this.dustLife[k]>0){this.dustLife[k]=Math.max(0,this.dustLife[k]-dt*.1);this.dustPositions[k*3+1]+=dt*.035;moved=true;}if(moved&&this.dust)this.dust.geometry.attributes.position.needsUpdate=true;}
  }
  private loop=(now:number)=>{
@@ -341,7 +344,7 @@ export class VisualEngine{
    this.activeClock+=dt;
    if(signal>.035&&this.activeClock>.55+(.7-this.settings.density/180)){this.accent=Math.max(this.accent,signal);this.activeClock=0;}
    this.midi*=Math.exp(-dt*5);this.accent*=Math.exp(-dt*6);
-   this.animateForms(dt);this.choreograph(dt);
+   this.animateForms(dt);if(this.artStyle===0){this.morphogenesis?.update(dt,this.bands);}else{this.choreograph(dt);}
   }
   this.syncBackground();this.updateCamera(dt);
   if(this.backgroundMesh)(this.backgroundMesh.material as THREE.MeshBasicMaterial).opacity=this.settings.bgOpacity/100;
@@ -373,6 +376,6 @@ export class VisualEngine{
   }
  };
  exportSheet=(width=3000)=>{const ratios:Record<PaperFormat,number>={square:1,a4p:210/297,a4l:297/210,a3p:297/420,wide:16/9};return this.exportPrint(width,ratios[this.paperConfig.format]);};
- reset=()=>{if(this.paintCtx){this.paintCtx.fillStyle='#ffffff';this.paintCtx.fillRect(0,0,1024,1024);if(this.paintTexture)this.paintTexture.needsUpdate=true;}this.paintStep=0;for(const f of this.forms)this.dispose(f);this.forms=[];this.idleForm=null;this.time=0;this.activeClock=0;this.count=0;this.mode='play';this.running=true;this.camera.position.set(0,2,10);this.focus.set(0,0,0);this.camPhase=0;this.camClock=0;this.travel=0;for(const d of this.dancers){d.trail=[];d.ink.geometry.dispose();d.ink.geometry=new THREE.BufferGeometry();d.halo.geometry.dispose();d.halo.geometry=new THREE.BufferGeometry();}this.clearWatercolor();this.clearStyleMaterials();this.dustPositions?.fill(0);this.dustLife.fill(0);this.dustCursor=0;this.drawingClock=0;if(this.dust)this.dust.geometry.attributes.position.needsUpdate=true;};
- destroy=()=>{this.destroyed=true;cancelAnimationFrame(this.raf);this.canvas.removeEventListener('pointerdown',this.down);this.canvas.removeEventListener('pointermove',this.move);this.canvas.removeEventListener('pointerup',this.up);this.canvas.removeEventListener('pointercancel',this.up);this.canvas.removeEventListener('wheel',this.wheel);for(const f of this.forms)this.dispose(f);if(this.backgroundMesh){this.backgroundMesh.geometry.dispose();(this.backgroundMesh.material as THREE.Material).dispose();}this.backgroundTexture?.dispose();this.paintTexture?.dispose();this.clearWatercolor();this.clearStyleMaterials();for(const d of this.dancers){for(const obj of [d.ink,d.halo,d.head]){this.scene.remove(obj);obj.geometry.dispose();(obj.material as THREE.Material).dispose();}}if(this.dust){this.scene.remove(this.dust);this.dust.geometry.dispose();(this.dust.material as THREE.Material).dispose();}this.renderer.dispose();};
+ reset=()=>{if(this.paintCtx){this.paintCtx.fillStyle='#ffffff';this.paintCtx.fillRect(0,0,1024,1024);if(this.paintTexture)this.paintTexture.needsUpdate=true;}this.paintStep=0;for(const f of this.forms)this.dispose(f);this.forms=[];this.idleForm=null;this.time=0;this.activeClock=0;this.count=0;this.mode='play';this.running=true;this.camera.position.set(0,2,10);this.focus.set(0,0,0);this.camPhase=0;this.camClock=0;this.travel=0;for(const d of this.dancers){d.trail=[];d.ink.geometry.dispose();d.ink.geometry=new THREE.BufferGeometry();d.halo.geometry.dispose();d.halo.geometry=new THREE.BufferGeometry();}this.clearWatercolor();this.clearStyleMaterials();this.morphogenesis?.reset();this.dustPositions?.fill(0);this.dustLife.fill(0);this.dustCursor=0;this.drawingClock=0;if(this.dust)this.dust.geometry.attributes.position.needsUpdate=true;};
+ destroy=()=>{this.destroyed=true;cancelAnimationFrame(this.raf);this.canvas.removeEventListener('pointerdown',this.down);this.canvas.removeEventListener('pointermove',this.move);this.canvas.removeEventListener('pointerup',this.up);this.canvas.removeEventListener('pointercancel',this.up);this.canvas.removeEventListener('wheel',this.wheel);for(const f of this.forms)this.dispose(f);if(this.backgroundMesh){this.backgroundMesh.geometry.dispose();(this.backgroundMesh.material as THREE.Material).dispose();}this.backgroundTexture?.dispose();this.paintTexture?.dispose();this.clearWatercolor();this.clearStyleMaterials();this.morphogenesis?.dispose();this.morphogenesis=null;for(const d of this.dancers){for(const obj of [d.ink,d.halo,d.head]){this.scene.remove(obj);obj.geometry.dispose();(obj.material as THREE.Material).dispose();}}if(this.dust){this.scene.remove(this.dust);this.dust.geometry.dispose();(this.dust.material as THREE.Material).dispose();}this.renderer.dispose();};
 }
