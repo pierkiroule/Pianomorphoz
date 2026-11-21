@@ -1,1 +1,184 @@
-import type{Settings}from './types';type Shape={x:number;y:number;r:number;angle:number;kind:number;age:number;life:number;speed:number;phase:number;color:string;weight:number;segments:number;seed:number};export class VisualEngine{canvas:HTMLCanvasElement;ctx:CanvasRenderingContext2D;settings:Settings;shapes:Shape[]=[];time=0;last=0;energy=0;running=true;raf=0;width=1;height=1;dpr=1;seed=12345;audio=0;midi=0;sustain=false;background:HTMLImageElement|HTMLVideoElement|null=null;private echo:HTMLCanvasElement;private echoCtx:CanvasRenderingContext2D;constructor(canvas:HTMLCanvasElement,settings:Settings){this.canvas=canvas;this.ctx=canvas.getContext('2d',{alpha:false})!;this.settings=settings;this.echo=document.createElement('canvas');this.echoCtx=this.echo.getContext('2d')!;this.resize();this.reset();this.raf=requestAnimationFrame(this.loop)}random=()=>{this.seed=(Math.imul(this.seed,1664525)+1013904223)>>>0;return this.seed/4294967296};range=(a:number,b:number)=>a+this.random()*(b-a);resize=()=>{this.width=innerWidth;this.height=innerHeight;this.dpr=Math.min(devicePixelRatio||1,2);this.canvas.width=Math.round(this.width*this.dpr);this.canvas.height=Math.round(this.height*this.dpr);this.echo.width=this.canvas.width;this.echo.height=this.canvas.height};reset=()=>{this.seed=12345;this.time=0;this.shapes=[];for(let i=0;i<15;i++)this.spawn(.5)};spawn=(power=1,pitch?:number)=>{if(this.shapes.length>90)return;const m=Math.min(this.width,this.height),a=this.range(0,Math.PI*2),rad=this.range(.04,.36)*m;this.shapes.push({x:pitch===undefined?this.width/2+Math.cos(a)*rad:this.width*(.12+.76*Math.max(0,Math.min(1,(pitch-24)/84))),y:this.height/2+Math.sin(a)*rad,r:this.range(12,70)*(.6+power),angle:this.range(0,7),kind:Math.floor(this.range(0,5)),age:0,life:this.range(5,17),speed:this.range(-.25,.25),phase:this.range(0,7),color:this.settings.colors[Math.floor(this.range(0,this.settings.colors.length))]||'#243d3a',weight:this.range(.4,2.2),segments:Math.floor(this.range(18,65)),seed:this.range(0,999)})};note=(pitch:number,velocity:number)=>{this.midi=Math.max(this.midi,velocity/127);this.spawn(velocity/127,pitch)};drawShape=(s:Shape)=>{const c=this.ctx,p=Math.max(0,Math.min(1,s.age/s.life)),fade=Math.min(1,s.age/1.4)*Math.min(1,(1-p)*3),r=s.r*(.45+.55*Math.min(1,s.age/2)),motion=this.time*(.12+this.settings.freedom/260);c.save();c.translate(s.x+Math.sin(motion+s.phase)*12,s.y+Math.cos(motion*.8+s.phase)*12);c.rotate(s.angle+this.time*s.speed*.14);c.globalAlpha=fade*(.22+this.settings.intensity/170);c.strokeStyle=s.color;c.fillStyle=s.color;c.lineWidth=s.weight;const style=this.settings.style;if(style==='geometry'){if(s.kind===0){c.beginPath();c.arc(0,0,r,0,Math.PI*2);c.fill()}else if(s.kind===1){for(let j=0;j<3;j++){c.beginPath();c.arc(0,0,r*(.35+j*.3),0,Math.PI*2);c.stroke()}}else if(s.kind===2){c.beginPath();c.moveTo(-r,-r*.7);c.lineTo(r,r*.7);c.stroke()}else if(s.kind===3){c.beginPath();c.moveTo(0,-r);c.lineTo(r,r);c.lineTo(-r,r);c.closePath();c.stroke()}else{c.beginPath();c.arc(0,0,r,-1,2.8);c.stroke()}}else if(style==='watercolor'){for(let j=0;j<5;j++){c.globalAlpha=fade*.04;c.beginPath();c.ellipse(Math.sin(s.seed+j)*r*.3,Math.cos(s.seed+j)*r*.3,r*(.6+j*.1),r*(.4+j*.08),s.angle+j*.3,0,Math.PI*2);c.fill()}}else{const count=style==='filaments'?5:7;for(let j=0;j<count;j++){c.beginPath();for(let k=0;k<s.segments;k++){const u=k/(s.segments-1),a=j*(style==='filaments'?1.3:2.399)+u*(style==='filaments'?4:3),x=Math.cos(a)*r*u+Math.sin(u*11+j+s.seed)*r*.08,y=Math.sin(a)*r*u+Math.cos(u*9+j+s.seed)*r*.08;if(k===0)c.moveTo(x,y);else c.lineTo(x,y)}c.stroke()}}c.restore()};draw=()=>{const c=this.ctx,w=this.width,h=this.height;c.setTransform(this.dpr,0,0,this.dpr,0,0);c.fillStyle='#fff';c.fillRect(0,0,w,h);const bg=this.background;if(bg){const iw=bg instanceof HTMLVideoElement?bg.videoWidth:bg.naturalWidth,ih=bg instanceof HTMLVideoElement?bg.videoHeight:bg.naturalHeight;if(iw&&ih){const s=Math.max(w/iw,h/ih);c.save();c.globalAlpha=this.settings.bgOpacity/100;try{c.drawImage(bg,(w-iw*s)/2,(h-ih*s)/2,iw*s,ih*s)}catch{}c.restore()}}c.save();const cam=this.settings.camera,z=cam==='pulse'?1+.035*Math.sin(this.time*.27):cam==='orbit'?1.08:1.02;c.translate(w/2,h/2);if(cam==='drift')c.translate(Math.sin(this.time*.13)*w*.014,Math.cos(this.time*.11)*h*.014);if(cam==='orbit')c.rotate(Math.sin(this.time*.1)*.055);c.scale(z,z);c.translate(-w/2,-h/2);for(const shape of this.shapes)this.drawShape(shape);c.restore();const fx=this.settings.effect;if(fx==='echo'||fx==='glow'){this.echoCtx.clearRect(0,0,this.echo.width,this.echo.height);this.echoCtx.drawImage(this.canvas,0,0);c.save();c.globalAlpha=this.settings.fxAmount/400;c.filter=fx==='glow'?'blur(12px)':'blur(3px)';c.drawImage(this.echo,fx==='echo'?4:0,fx==='echo'?4:0,w,h);c.restore()}if(fx==='mono'&&this.settings.fxAmount>0){const im=c.getImageData(0,0,this.canvas.width,this.canvas.height),d=im.data,k=this.settings.fxAmount/100;for(let i=0;i<d.length;i+=4){const g=.2126*d[i]+.7152*d[i+1]+.0722*d[i+2];d[i]=d[i]*(1-k)+g*k;d[i+1]=d[i+1]*(1-k)+g*k;d[i+2]=d[i+2]*(1-k)+g*k}c.putImageData(im,0,0)}};loop=(now:number)=>{const dt=Math.min(.05,(now-this.last)/1000||.016);this.last=now;if(this.running){this.time+=dt;const target=Math.max(this.audio*2,this.midi,this.sustain?.25:0);this.energy+=(target-this.energy)*Math.min(1,dt*4);this.midi*=Math.exp(-dt*4);const rate=(.25+this.settings.density/100*1.6)*(1+this.energy*3);if(this.random()<rate*dt)this.spawn(.5+this.energy);for(const s of this.shapes)s.age+=dt;this.shapes=this.shapes.filter(s=>s.age<s.life);if(this.shapes.length<5)this.spawn(.4)}this.draw();this.raf=requestAnimationFrame(this.loop)};destroy=()=>cancelAnimationFrame(this.raf)};
+import * as THREE from 'three';
+import type { Settings } from './types';
+
+type Form = { mesh: THREE.Mesh; line: THREE.Line; age: number; life: number; phase: number; speed: number; depth: number; pitch: number };
+export class VisualEngine {
+  canvas: HTMLCanvasElement;
+  settings: Settings;
+  audio = 0;
+  midi = 0;
+  sustain = false;
+  running = true;
+  background: HTMLImageElement | HTMLVideoElement | null = null;
+  private renderer: THREE.WebGLRenderer;
+  private scene = new THREE.Scene();
+  private camera = new THREE.PerspectiveCamera(66, 1, .1, 260);
+  private forms: Form[] = [];
+  private raf = 0;
+  private last = 0;
+  private time = 0;
+  private energy = 0;
+  private seed = 8197;
+  private spawnClock = 0;
+  private travel = 0;
+  private backdrop: THREE.Mesh | null = null;
+  private backdropSource: HTMLImageElement | HTMLVideoElement | null = null;
+  private texture: THREE.Texture | null = null;
+  private destroyed = false;
+
+  constructor(canvas: HTMLCanvasElement, settings: Settings) {
+    this.canvas = canvas;
+    this.settings = settings;
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: false, powerPreference: 'high-performance', preserveDrawingBuffer: true });
+    this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    this.scene.background = new THREE.Color('#ffffff');
+    this.scene.fog = new THREE.Fog(0xffffff, 35, 115);
+    this.camera.position.set(0, 0, 0);
+    this.resize();
+    this.reset();
+    this.raf = requestAnimationFrame(this.loop);
+  }
+  private random = () => {
+    this.seed = (Math.imul(this.seed, 1664525) + 1013904223) >>> 0;
+    return this.seed / 4294967296;
+  };
+  private range = (a: number, b: number) => a + this.random() * (b - a);
+  resize = () => {
+    const w = Math.max(1, window.innerWidth), h = Math.max(1, window.innerHeight);
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, w < 700 ? 1.4 : 1.7));
+    this.renderer.setSize(w, h, false);
+    this.camera.aspect = w / h;
+    this.camera.updateProjectionMatrix();
+  };
+  private clearForms() {
+    for (const f of this.forms) {
+      this.scene.remove(f.mesh, f.line);
+      f.mesh.geometry.dispose(); (f.mesh.material as THREE.Material).dispose();
+      f.line.geometry.dispose(); (f.line.material as THREE.Material).dispose();
+    }
+    this.forms = [];
+  }
+  reset = () => {
+    this.clearForms(); this.seed = 8197; this.time = 0; this.travel = 0; this.spawnClock = 0;
+    this.camera.position.set(0, 0, 0);
+    for (let i = 0; i < 16; i++) this.spawn(.35, undefined, -12 - i * 6);
+  };
+  private spawn(power = .5, pitch?: number, depth?: number) {
+    const cap = window.innerWidth < 700 ? 25 : 38;
+    if (this.forms.length >= cap) return;
+    const phase = this.range(0, Math.PI * 2);
+    const size = this.range(1.3, 3.7) * (.75 + power * .6);
+    const x = pitch === undefined ? this.range(-9, 9) : (pitch - 60) / 6;
+    const y = this.range(-6, 6);
+    const z = depth ?? this.camera.position.z - this.range(22, 65);
+    const pts: THREE.Vector3[] = [];
+    const count = 48;
+    for (let i = 0; i < count; i++) {
+      const u = i / (count - 1), a = u * Math.PI * this.range(2.2, 3.4) + phase;
+      const taper = Math.sin(Math.PI * u);
+      pts.push(new THREE.Vector3(
+        Math.cos(a) * size * (0.3 + u * 1.4),
+        Math.sin(a) * size * (.3 + u * 1.2),
+        (u - .5) * size * 3 + Math.sin(a * .6) * size * .6
+      ).multiplyScalar(.55 + taper * .45));
+    }
+    const curve = new THREE.CatmullRomCurve3(pts);
+    const radius = this.range(.018, .075) * (1 + power * .4);
+    const geometry = new THREE.TubeGeometry(curve, 110, radius, 5, false);
+    const color = new THREE.Color(this.settings.colors[Math.floor(this.random() * this.settings.colors.length)] || '#526f69');
+    const material = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: .48, side: THREE.DoubleSide, depthWrite: false });
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.position.set(x, y, z);
+    const lineGeo = new THREE.BufferGeometry().setFromPoints(curve.getPoints(100));
+    const line = new THREE.Line(lineGeo, new THREE.LineBasicMaterial({ color, transparent: true, opacity: .24, depthWrite: false }));
+    line.position.copy(mesh.position);
+    this.scene.add(mesh, line);
+    this.forms.push({ mesh, line, age: 0, life: this.range(13, 28), phase, speed: this.range(.06, .22), depth: z, pitch: pitch ?? 60 });
+  }
+  note = (pitch: number, velocity: number) => {
+    const v = Math.max(0, Math.min(1, velocity / 127));
+    this.midi = Math.max(this.midi, v);
+    this.spawn(v, pitch);
+  };
+  private syncBackground() {
+    if (this.background === this.backdropSource) return;
+    this.backdropSource = this.background;
+    if (this.backdrop) {
+      this.camera.remove(this.backdrop);
+      this.backdrop.geometry.dispose();
+      (this.backdrop.material as THREE.Material).dispose();
+      this.backdrop = null;
+    }
+    this.texture?.dispose(); this.texture = null;
+    if (!this.background) return;
+    this.texture = this.background instanceof HTMLVideoElement
+      ? new THREE.VideoTexture(this.background)
+      : new THREE.Texture(this.background);
+    if (!(this.background instanceof HTMLVideoElement)) this.texture.needsUpdate = true;
+    const material = new THREE.MeshBasicMaterial({ map: this.texture, transparent: true, opacity: this.settings.bgOpacity / 100, depthWrite: false, depthTest: false });
+    this.backdrop = new THREE.Mesh(new THREE.PlaneGeometry(180, 120), material);
+    this.backdrop.position.z = -105;
+    this.backdrop.renderOrder = -1;
+    this.camera.add(this.backdrop);
+    if (!this.camera.parent) this.scene.add(this.camera);
+  }
+  private loop = (now: number) => {
+    if (this.destroyed) return;
+    this.raf = requestAnimationFrame(this.loop);
+    const dt = Math.min(.05, (now - (this.last || now)) / 1000);
+    this.last = now;
+    this.syncBackground();
+    if (this.running) {
+      this.time += dt;
+      const target = Math.max(this.audio * 2.5, this.midi, this.sustain ? .2 : 0);
+      this.energy = THREE.MathUtils.damp(this.energy, target, 3, dt);
+      this.midi *= Math.exp(-dt * 3.2);
+      const speed = 1.7 + this.energy * 2.5;
+      this.travel += speed * dt;
+      this.camera.position.set(
+        Math.sin(this.time * .13) * 2.5 + Math.sin(this.time * .037) * 2,
+        Math.sin(this.time * .1) * 1.7,
+        -this.travel
+      );
+      this.camera.lookAt(
+        Math.sin(this.time * .13 + .55) * 3,
+        Math.sin(this.time * .1 + .4) * 2,
+        -this.travel - 24
+      );
+      this.spawnClock += dt * (.3 + this.settings.density / 100 * 1.1) * (1 + this.energy);
+      if (this.spawnClock >= 1) {
+        this.spawnClock -= 1;
+        this.spawn(.3 + this.energy);
+      }
+      for (const f of [...this.forms]) {
+        f.age += dt;
+        const fade = Math.min(1, f.age / 1.6, (f.life - f.age) / 3);
+        const wave = Math.sin(this.time * .42 + f.phase);
+        f.mesh.rotation.set(wave * .16, this.time * f.speed, Math.sin(this.time * .17 + f.phase) * .28);
+        f.line.rotation.copy(f.mesh.rotation);
+        const scale = 1 + Math.sin(this.time * .6 + f.phase) * .1 + this.energy * .15;
+        f.mesh.scale.setScalar(scale);
+        f.line.scale.copy(f.mesh.scale);
+        const opacity = Math.max(0, fade) * (.3 + this.settings.intensity / 170);
+        (f.mesh.material as THREE.MeshBasicMaterial).opacity = opacity * .65;
+        (f.line.material as THREE.LineBasicMaterial).opacity = opacity * .32;
+        if (f.age > f.life || f.depth > this.camera.position.z + 8) {
+          this.scene.remove(f.mesh, f.line);
+          f.mesh.geometry.dispose(); (f.mesh.material as THREE.Material).dispose();
+          f.line.geometry.dispose(); (f.line.material as THREE.Material).dispose();
+          this.forms.splice(this.forms.indexOf(f), 1);
+        }
+      }
+    }
+    if (this.backdrop) (this.backdrop.material as THREE.MeshBasicMaterial).opacity = this.settings.bgOpacity / 100;
+    this.renderer.render(this.scene, this.camera);
+  };
+  destroy = () => {
+    this.destroyed = true;
+    cancelAnimationFrame(this.raf);
+    this.clearForms();
+    if (this.backdrop) { this.camera.remove(this.backdrop); this.backdrop.geometry.dispose(); (this.backdrop.material as THREE.Material).dispose(); }
+    this.texture?.dispose();
+    this.renderer.dispose();
+  };
+}
