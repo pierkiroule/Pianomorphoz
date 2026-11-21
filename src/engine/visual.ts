@@ -42,6 +42,7 @@ export class VisualEngine{
  private camPhase=0;private camClock=0;private camDistance=9;private camFov=52;private shotAngle=0;private shotElevation=0;private shotZoom=1;private printFov=53;
  private pointer:{x:number;y:number}|null=null;private energy=0;private accent=0;private count=0;private lastSignal=0;private idleForm:Form|null=null;
  private paintCanvas=document.createElement('canvas');private paintCtx:CanvasRenderingContext2D|null=null;private paintTexture:THREE.CanvasTexture|null=null;private paintClock=0;private paintStep=0;
+ private artStyle=0;private styleSeed=Math.random()*1000;
  private dancers:{tip:THREE.Vector3;trail:THREE.Vector3[];ink:THREE.Line;halo:THREE.Line;head:THREE.Mesh;phase:number}[]=[];
  private dust:THREE.Points|null=null;private dustPositions:Float32Array|null=null;private dustLife=new Float32Array(480);private dustCursor=0;private travel=0;private drawingClock=0;
  private backgroundTexture:THREE.Texture|null=null;private backgroundMesh:THREE.Mesh|null=null;private bgRef:HTMLImageElement|HTMLVideoElement|null=null;
@@ -184,6 +185,7 @@ export class VisualEngine{
   ctx.beginPath();ctx.ellipse(0,0,radius*1.6,radius*.65,0,0,Math.PI*2);ctx.fill();
   ctx.restore();this.paintTexture.needsUpdate=true;
  }
+ setArtStyle=(n:number)=>{this.artStyle=Math.max(0,Math.min(9,Math.round(n)));this.styleSeed=Math.random()*1000;this.travel=0;for(const d of this.dancers){d.trail=[];d.ink.geometry.dispose();d.ink.geometry=new THREE.BufferGeometry();d.halo.geometry.dispose();d.halo.geometry=new THREE.BufferGeometry();}this.dustPositions?.fill(0);this.dustLife.fill(0);if(this.dust)this.dust.geometry.attributes.position.needsUpdate=true;};
  private initChoreography(){
   const colors=['#355b75','#b87869','#bda26e'];
   for(let i=0;i<3;i++){
@@ -206,22 +208,34 @@ export class VisualEngine{
   for(let i=0;i<this.dancers.length;i++){
    const d=this.dancers[i],p=d.phase;
    const radius=1.0+.5*Math.sin(t*.17+p)+intensity*.5;
-   const x=center.x+Math.sin(t*(.75+i*.13)+p)*radius+Math.sin(t*1.7+p)*.28;
-   const y=center.y+Math.cos(t*(.64+i*.09)+p)*(.9+intensity*.45)+Math.sin(t*1.21-p)*.25;
-   const z=center.z+Math.sin(t*.53+p)*.85;
+   const q=p+this.styleSeed*.01,style=this.artStyle;
+   let x=center.x+Math.sin(t*(.75+i*.13)+q)*radius+Math.sin(t*1.7+q)*.28;
+   let y=center.y+Math.cos(t*(.64+i*.09)+q)*(.9+intensity*.45)+Math.sin(t*1.21-q)*.25;
+   let z=center.z+Math.sin(t*.53+q)*.85;
+   switch(style){
+    case 1:x=Math.sin(t*.38+q)*1.6;y=Math.sin(t*.91+q)*1.1;z=center.z+Math.cos(t*.28+q)*.3;break;
+    case 2:x=Math.sin(t*1.8+q)*2.2;y=Math.cos(t*1.5+q)*1.6;z=center.z+Math.sin(t*2.3+q);break;
+    case 3:x=Math.sin(t*.5+q)*.8+Math.sin(t*3+q)*.3;y=Math.cos(t*.3+q)*1.7;z=center.z+Math.sin(t*.7+q)*1.2;break;
+    case 4:x=Math.sin(t*.62+q)*2.1;y=Math.sin(t*.62+q)*Math.cos(t*.3+q)*1.3;z=center.z+Math.cos(t*.62+q)*1.2;break;
+    case 5:x=Math.sin(t*.4+q)*1.5+Math.sin(t*3.1+q)*.35;y=Math.cos(t*.47+q)*1.4;z=center.z+Math.cos(t*2.7+q)*.65;break;
+    case 6:x=Math.cos(t*1.1+q)*1.5;y=Math.sin(t*1.1+q)*1.5;z=center.z+Math.sin(t*.22+q)*1.4;break;
+    case 7:x=Math.sin(t*2.4+q)*2;y=Math.cos(t*2.8+q)*1.5;z=center.z+Math.sin(t*3.4+q)*.7;break;
+    case 8:x=Math.round(Math.sin(t*.7+q)*5)/3;y=Math.round(Math.cos(t*.9+q)*5)/3;z=center.z+Math.round(Math.sin(t*.5+q)*4)/4;break;
+    case 9:x=Math.sin(t*.5+q)*(1+Math.sin(t*2.1+q));y=Math.cos(t*.5+q)*(1+Math.sin(t*2.1+q));z=center.z+Math.sin(t*.8+q)*1.2;break;
+   }
    d.tip.set(x,y,z);d.head.position.copy(d.tip);
    if(this.drawingClock>=.045){
     d.trail.push(d.tip.clone());if(d.trail.length>220)d.trail.shift();
     if(d.trail.length>1){
-     const g=new THREE.BufferGeometry().setFromPoints(d.trail);d.ink.geometry.dispose();d.ink.geometry=g;
+     const g=new THREE.BufferGeometry().setFromPoints(d.trail);d.ink.geometry.dispose();d.ink.geometry=g;const mat=d.ink.material as THREE.LineBasicMaterial;mat.opacity=[.58,.92,.25,.48,.68,.62,.85,.12,.8,.56][this.artStyle];mat.color.set(['#416c81','#1d2931','#8170a8','#587d73','#b67d80','#527e87','#465c76','#b2a0aa','#364954','#a77a8c'][this.artStyle]);
      const offset=d.trail.map((v,k)=>v.clone().add(new THREE.Vector3(Math.sin(k*.22+p)*.035,Math.cos(k*.19+p)*.045,.055)));
-     const h=new THREE.BufferGeometry().setFromPoints(offset);d.halo.geometry.dispose();d.halo.geometry=h;
+     const h=new THREE.BufferGeometry().setFromPoints(offset);d.halo.geometry.dispose();d.halo.geometry=h;(d.halo.material as THREE.LineBasicMaterial).opacity=[.24,.035,.38,.1,.3,.2,.08,.06,.04,.25][this.artStyle];
     }
-    for(let k=0;k<5;k++){
+    for(let k=0;k<[6,1,16,8,4,11,3,22,2,14][this.artStyle];k++){
      const index=this.dustCursor++%480;const a=index*3;
-     this.dustPositions![a]=x+(this.rand()-.5)*(.5+intensity);
-     this.dustPositions![a+1]=y+(this.rand()-.5)*(.5+intensity);
-     this.dustPositions![a+2]=z+(this.rand()-.5)*.45;
+     this.dustPositions![a]=x+(this.rand()-.5)*([.6,.08,2.5,.8,.35,1.2,.15,2.8,.12,1.5][this.artStyle]+intensity);
+     this.dustPositions![a+1]=y+(this.rand()-.5)*([.6,.08,2.5,.8,.35,1.2,.15,2.8,.12,1.5][this.artStyle]+intensity);
+     this.dustPositions![a+2]=z+(this.rand()-.5)*[.5,.05,2.2,1,.3,1.5,.1,2,.05,1.3][this.artStyle];
      this.dustLife[index]=1;
     }
    }
