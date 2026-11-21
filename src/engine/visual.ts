@@ -1,184 +1,212 @@
 import * as THREE from 'three';
 import type { Settings } from './types';
 
-type Form = { mesh: THREE.Mesh; line: THREE.Line; age: number; life: number; phase: number; speed: number; depth: number; pitch: number };
+type Stroke = { mesh: THREE.Mesh; points: THREE.Vector3[]; widths: number[]; color: THREE.Color; age: number };
+type Drop = { mesh: THREE.Sprite; velocity: THREE.Vector3; age: number; life: number };
+type Mode = 'play' | 'reveal' | 'print';
+const VS = `varying vec2 vUv; void main(){vUv=uv;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`;
+const FS = `uniform vec3 ink;uniform float opacity;varying vec2 vUv;
+void main(){float edge=pow(max(0.,1.-abs(vUv.y*2.-1.)),.55);
+float grain=sin(vUv.x*231.+vUv.y*31.)*sin(vUv.x*79.-vUv.y*97.);
+gl_FragColor=vec4(ink,opacity*edge*(.76+.24*grain));}`;
 export class VisualEngine {
-  canvas: HTMLCanvasElement;
-  settings: Settings;
-  audio = 0;
-  midi = 0;
-  sustain = false;
-  running = true;
-  background: HTMLImageElement | HTMLVideoElement | null = null;
-  private renderer: THREE.WebGLRenderer;
-  private scene = new THREE.Scene();
-  private camera = new THREE.PerspectiveCamera(66, 1, .1, 260);
-  private forms: Form[] = [];
-  private raf = 0;
-  private last = 0;
-  private time = 0;
-  private energy = 0;
-  private seed = 8197;
-  private spawnClock = 0;
-  private travel = 0;
-  private backdrop: THREE.Mesh | null = null;
-  private backdropSource: HTMLImageElement | HTMLVideoElement | null = null;
-  private texture: THREE.Texture | null = null;
-  private destroyed = false;
-
-  constructor(canvas: HTMLCanvasElement, settings: Settings) {
-    this.canvas = canvas;
-    this.settings = settings;
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: false, powerPreference: 'high-performance', preserveDrawingBuffer: true });
-    this.renderer.outputColorSpace = THREE.SRGBColorSpace;
-    this.scene.background = new THREE.Color('#ffffff');
-    this.scene.fog = new THREE.Fog(0xffffff, 35, 115);
-    this.camera.position.set(0, 0, 0);
-    this.resize();
-    this.reset();
-    this.raf = requestAnimationFrame(this.loop);
+  canvas: HTMLCanvasElement; settings: Settings; audio=0; midi=0; sustain=false; running=true;
+  background: HTMLImageElement|HTMLVideoElement|null=null;
+  mode: Mode='play'; private renderer: THREE.WebGLRenderer; private scene=new THREE.Scene();
+  private camera=new THREE.PerspectiveCamera(53,1,.1,1000);
+  private strokes: Stroke[]=[]; private drops: Drop[]=[]; private tip=new THREE.Vector3();
+  private heading=new THREE.Vector3(0,0,-1); private target=new THREE.Vector3();
+  private time=0; private last=0; private distance=0; private energy=0; private pulse=0;
+  private raf=0; private seed=947; private step=0; private current:Stroke|null=null;
+  private bounds=new THREE.Box3(); private center=new THREE.Vector3(); private radius=10;
+  private orbitTheta=0; private orbitPhi=.25; private orbitZoom=1; private orbitPan=new THREE.Vector3();
+  private pointer: {x:number;y:number}|null=null;
+  private bgSource: HTMLImageElement|HTMLVideoElement|null=null; private bgTexture:THREE.Texture|null=null;
+  private bgMesh:THREE.Mesh|null=null; private destroyed=false;
+  private splashTexture:THREE.CanvasTexture;
+  constructor(canvas:HTMLCanvasElement,settings:Settings){
+    this.canvas=canvas;this.settings=settings;
+    this.renderer=new THREE.WebGLRenderer({canvas,alpha:false,antialias:true,preserveDrawingBuffer:true,powerPreference:'high-performance'});
+    this.renderer.outputColorSpace=THREE.SRGBColorSpace;
+    this.scene.background=new THREE.Color('#ffffff');
+    this.scene.fog=new THREE.Fog('#ffffff',65,200);
+    const c=document.createElement('canvas');c.width=c.height=64;
+    const ctx=c.getContext('2d')!,g=ctx.createRadialGradient(32,32,0,32,32,32);
+    g.addColorStop(0,'rgba(255,255,255,.85)');g.addColorStop(.25,'rgba(255,255,255,.6)');
+    g.addColorStop(1,'rgba(255,255,255,0)');ctx.fillStyle=g;ctx.fillRect(0,0,64,64);
+    this.splashTexture=new THREE.CanvasTexture(c);
+    this.canvas.addEventListener('pointerdown',this.down);this.canvas.addEventListener('pointermove',this.move);
+    this.canvas.addEventListener('pointerup',this.up);this.canvas.addEventListener('pointercancel',this.up);
+    this.canvas.addEventListener('wheel',this.wheel,{passive:false});
+    this.resize();this.reset();this.raf=requestAnimationFrame(this.loop);
   }
-  private random = () => {
-    this.seed = (Math.imul(this.seed, 1664525) + 1013904223) >>> 0;
-    return this.seed / 4294967296;
-  };
-  private range = (a: number, b: number) => a + this.random() * (b - a);
-  resize = () => {
-    const w = Math.max(1, window.innerWidth), h = Math.max(1, window.innerHeight);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, w < 700 ? 1.4 : 1.7));
-    this.renderer.setSize(w, h, false);
-    this.camera.aspect = w / h;
-    this.camera.updateProjectionMatrix();
-  };
-  private clearForms() {
-    for (const f of this.forms) {
-      this.scene.remove(f.mesh, f.line);
-      f.mesh.geometry.dispose(); (f.mesh.material as THREE.Material).dispose();
-      f.line.geometry.dispose(); (f.line.material as THREE.Material).dispose();
+  private rand=()=>{this.seed=(Math.imul(this.seed,1664525)+1013904223)>>>0;return this.seed/4294967296};
+  private range=(a:number,b:number)=>a+(b-a)*this.rand();
+  resize=()=>{const w=Math.max(1,innerWidth),h=Math.max(1,innerHeight);
+    this.renderer.setPixelRatio(Math.min(devicePixelRatio||1,w<700?1.5:2));
+    this.renderer.setSize(w,h,false);this.camera.aspect=w/h;this.camera.updateProjectionMatrix();};
+  private color(){const colors=this.settings.colors;return new THREE.Color(colors[Math.floor(this.rand()*colors.length)]||'#365e59');}
+  private createStroke(){
+    const material=new THREE.ShaderMaterial({vertexShader:VS,fragmentShader:FS,
+      uniforms:{ink:{value:this.color()},opacity:{value:.78}},side:THREE.DoubleSide,transparent:true,depthWrite:false});
+    const mesh=new THREE.Mesh(new THREE.BufferGeometry(),material);mesh.frustumCulled=false;
+    this.scene.add(mesh);
+    const stroke:Stroke={mesh,points:[],widths:[],color:(material.uniforms.ink.value as THREE.Color),age:0};
+    this.strokes.push(stroke);this.current=stroke;
+  }
+  private updateStroke(s:Stroke){
+    const n=s.points.length;if(n<2)return;
+    const positions=new Float32Array(n*6),uvs=new Float32Array(n*4),indices=new Uint32Array((n-1)*6);
+    const tangent=new THREE.Vector3(),side=new THREE.Vector3(),up=new THREE.Vector3(0,1,0);
+    for(let i=0;i<n;i++){
+      tangent.copy(s.points[Math.min(n-1,i+1)]).sub(s.points[Math.max(0,i-1)]).normalize();
+      side.crossVectors(tangent,up).normalize();
+      if(side.lengthSq()<.01)side.set(1,0,0);
+      const w=s.widths[i];
+      for(let k=0;k<2;k++){const j=i*2+k,p=s.points[i].clone().addScaledVector(side,(k?1:-1)*w);
+        positions.set([p.x,p.y,p.z],j*3);uvs.set([i/(n-1),k],j*2);}
+      if(i<n-1){const j=i*2,o=i*6;indices.set([j,j+1,j+2,j+1,j+3,j+2],o);}
     }
-    this.forms = [];
+    const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.BufferAttribute(positions,3));
+    g.setAttribute('uv',new THREE.BufferAttribute(uvs,2));g.setIndex(new THREE.BufferAttribute(indices,1));
+    s.mesh.geometry.dispose();s.mesh.geometry=g;
   }
-  reset = () => {
-    this.clearForms(); this.seed = 8197; this.time = 0; this.travel = 0; this.spawnClock = 0;
-    this.camera.position.set(0, 0, 0);
-    for (let i = 0; i < 16; i++) this.spawn(.35, undefined, -12 - i * 6);
-  };
-  private spawn(power = .5, pitch?: number, depth?: number) {
-    const cap = window.innerWidth < 700 ? 25 : 38;
-    if (this.forms.length >= cap) return;
-    const phase = this.range(0, Math.PI * 2);
-    const size = this.range(1.3, 3.7) * (.75 + power * .6);
-    const x = pitch === undefined ? this.range(-9, 9) : (pitch - 60) / 6;
-    const y = this.range(-6, 6);
-    const z = depth ?? this.camera.position.z - this.range(22, 65);
-    const pts: THREE.Vector3[] = [];
-    const count = 48;
-    for (let i = 0; i < count; i++) {
-      const u = i / (count - 1), a = u * Math.PI * this.range(2.2, 3.4) + phase;
-      const taper = Math.sin(Math.PI * u);
-      pts.push(new THREE.Vector3(
-        Math.cos(a) * size * (0.3 + u * 1.4),
-        Math.sin(a) * size * (.3 + u * 1.2),
-        (u - .5) * size * 3 + Math.sin(a * .6) * size * .6
-      ).multiplyScalar(.55 + taper * .45));
+  private splatter(power:number){
+    const count=Math.min(12,2+Math.floor(power*10));
+    for(let i=0;i<count&&this.drops.length<220;i++){
+      const mat=new THREE.SpriteMaterial({map:this.splashTexture,color:this.color(),transparent:true,opacity:this.range(.2,.7),depthWrite:false});
+      const sprite=new THREE.Sprite(mat);sprite.position.copy(this.tip);
+      sprite.position.add(new THREE.Vector3(this.range(-.4,.4),this.range(-.4,.4),this.range(-.4,.4)));
+      sprite.scale.setScalar(this.range(.03,.23)*(1+power));this.scene.add(sprite);
+      this.drops.push({mesh:sprite,velocity:new THREE.Vector3(this.range(-1,1),this.range(-1,1),this.range(-1,1)).multiplyScalar(.3+power*2),age:0,life:this.range(5,18)});
     }
-    const curve = new THREE.CatmullRomCurve3(pts);
-    const radius = this.range(.018, .075) * (1 + power * .4);
-    const geometry = new THREE.TubeGeometry(curve, 110, radius, 5, false);
-    const color = new THREE.Color(this.settings.colors[Math.floor(this.random() * this.settings.colors.length)] || '#526f69');
-    const material = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: .48, side: THREE.DoubleSide, depthWrite: false });
-    const mesh = new THREE.Mesh(geometry, material);
-    mesh.position.set(x, y, z);
-    const lineGeo = new THREE.BufferGeometry().setFromPoints(curve.getPoints(100));
-    const line = new THREE.Line(lineGeo, new THREE.LineBasicMaterial({ color, transparent: true, opacity: .24, depthWrite: false }));
-    line.position.copy(mesh.position);
-    this.scene.add(mesh, line);
-    this.forms.push({ mesh, line, age: 0, life: this.range(13, 28), phase, speed: this.range(.06, .22), depth: z, pitch: pitch ?? 60 });
   }
-  note = (pitch: number, velocity: number) => {
-    const v = Math.max(0, Math.min(1, velocity / 127));
-    this.midi = Math.max(this.midi, v);
-    this.spawn(v, pitch);
+  note=(pitch:number,velocity:number)=>{
+    if(this.mode!=='play')return;
+    const v=Math.max(0,Math.min(1,velocity/127));this.midi=Math.max(this.midi,v);
+    this.pulse=Math.max(this.pulse,v);
+    this.heading.x+=((pitch-60)/60)*v*.25;
+    this.heading.y+=Math.sin(pitch*.38)*v*.2;
+    this.heading.normalize();
+    if(v>.67)this.splatter(v);
+    if(this.current&&this.current.points.length>8&&v>.55)this.createStroke();
   };
-  private syncBackground() {
-    if (this.background === this.backdropSource) return;
-    this.backdropSource = this.background;
-    if (this.backdrop) {
-      this.camera.remove(this.backdrop);
-      this.backdrop.geometry.dispose();
-      (this.backdrop.material as THREE.Material).dispose();
-      this.backdrop = null;
+  private paint(dt:number){
+    const t=this.time,freedom=this.settings.freedom/100;
+    const curl=new THREE.Vector3(Math.sin(t*.73+this.tip.y*.19),Math.cos(t*.47+this.tip.z*.17),-.9);
+    this.heading.lerp(curl.normalize(),Math.min(1,dt*(.35+freedom*.9)));
+    this.heading.normalize();
+    const speed=(.5+this.energy*2.2)*(1+this.settings.intensity/180);
+    this.tip.addScaledVector(this.heading,speed*dt);
+    this.distance+=speed*dt;
+    this.step+=speed*dt;
+    if(this.step>.065){
+      this.step=0;
+      if(!this.current||this.current.points.length>=90)this.createStroke();
+      const s=this.current!;
+      s.points.push(this.tip.clone());
+      const w=(.012+this.energy*.13+this.pulse*.09)*(.65+.35*Math.sin(t*3));
+      s.widths.push(w);
+      this.updateStroke(s);
+      this.bounds.expandByPoint(this.tip);
     }
-    this.texture?.dispose(); this.texture = null;
-    if (!this.background) return;
-    this.texture = this.background instanceof HTMLVideoElement
-      ? new THREE.VideoTexture(this.background)
-      : new THREE.Texture(this.background);
-    if (!(this.background instanceof HTMLVideoElement)) this.texture.needsUpdate = true;
-    const material = new THREE.MeshBasicMaterial({ map: this.texture, transparent: true, opacity: this.settings.bgOpacity / 100, depthWrite: false, depthTest: false });
-    this.backdrop = new THREE.Mesh(new THREE.PlaneGeometry(180, 120), material);
-    this.backdrop.position.z = -105;
-    this.backdrop.renderOrder = -1;
-    this.camera.add(this.backdrop);
-    if (!this.camera.parent) this.scene.add(this.camera);
+    if(this.energy>.5&&this.rand()<dt*this.energy*2)this.splatter(this.energy);
   }
-  private loop = (now: number) => {
-    if (this.destroyed) return;
-    this.raf = requestAnimationFrame(this.loop);
-    const dt = Math.min(.05, (now - (this.last || now)) / 1000);
-    this.last = now;
+  private updateCamera(dt:number){
+    if(this.mode==='play'){
+      const behind=this.heading.clone().multiplyScalar(-7);
+      const desired=this.tip.clone().add(behind).add(new THREE.Vector3(0,2.4,0));
+      this.camera.position.lerp(desired,1-Math.exp(-dt*1.25));
+      const look=this.tip.clone().addScaledVector(this.heading,5);
+      this.target.lerp(look,1-Math.exp(-dt*2));
+      this.camera.lookAt(this.target);
+    }else{
+      const r=this.radius*2.7*this.orbitZoom;
+      const pos=new THREE.Vector3(Math.sin(this.orbitTheta)*Math.cos(this.orbitPhi)*r,
+        Math.sin(this.orbitPhi)*r,Math.cos(this.orbitTheta)*Math.cos(this.orbitPhi)*r);
+      const aim=this.center.clone().add(this.orbitPan);
+      this.camera.position.lerp(aim.clone().add(pos),1-Math.exp(-dt*3));
+      this.camera.lookAt(aim);
+    }
+  }
+  reveal=()=>{
+    this.mode='reveal';this.running=false;this.current=null;
+    this.bounds.getCenter(this.center);
+    const size=this.bounds.getSize(new THREE.Vector3());
+    this.radius=Math.max(2,size.length()*.5);
+    this.orbitTheta=.4;this.orbitPhi=.25;this.orbitZoom=1;this.orbitPan.set(0,0,0);
+  };
+  printMode=()=>{if(this.mode==='play')this.reveal();this.mode='print';};
+  resume=()=>{this.mode='play';this.running=true;this.current=null;};
+  setPrintView=(angle:number,elevation:number,zoom:number)=>{
+    this.orbitTheta=THREE.MathUtils.degToRad(angle);
+    this.orbitPhi=THREE.MathUtils.degToRad(Math.max(-85,Math.min(85,elevation)));
+    this.orbitZoom=Math.max(.3,Math.min(3,zoom));
+  };
+  private down=(e:PointerEvent)=>{if(this.mode==='print'){this.pointer={x:e.clientX,y:e.clientY};this.canvas.setPointerCapture(e.pointerId);}};
+  private move=(e:PointerEvent)=>{if(!this.pointer||this.mode!=='print')return;
+    this.orbitTheta+=(e.clientX-this.pointer.x)*.008;
+    this.orbitPhi=THREE.MathUtils.clamp(this.orbitPhi+(e.clientY-this.pointer.y)*.008,-1.48,1.48);
+    this.pointer={x:e.clientX,y:e.clientY};};
+  private up=()=>{this.pointer=null;};
+  private wheel=(e:WheelEvent)=>{if(this.mode!=='print')return;e.preventDefault();this.orbitZoom=THREE.MathUtils.clamp(this.orbitZoom*Math.exp(e.deltaY*.001),.3,3);};
+  exportPrint=(size=3000,aspect=1)=>{
+    const width=size,height=Math.round(size/aspect);
+    const oldSize=new THREE.Vector2();this.renderer.getSize(oldSize);
+    const oldAspect=this.camera.aspect;const oldPixel=this.renderer.getPixelRatio();
+    this.renderer.setPixelRatio(1);this.renderer.setSize(width,height,false);
+    this.camera.aspect=width/height;this.camera.updateProjectionMatrix();
+    this.renderer.render(this.scene,this.camera);
+    const url=this.canvas.toDataURL('image/png');
+    this.renderer.setPixelRatio(oldPixel);this.renderer.setSize(oldSize.x,oldSize.y,false);
+    this.camera.aspect=oldAspect;this.camera.updateProjectionMatrix();
+    return url;
+  };
+  private syncBackground(){
+    if(this.background===this.bgSource)return;this.bgSource=this.background;
+    if(this.bgMesh){this.camera.remove(this.bgMesh);this.bgMesh.geometry.dispose();(this.bgMesh.material as THREE.Material).dispose();this.bgMesh=null;}
+    this.bgTexture?.dispose();this.bgTexture=null;
+    if(!this.background)return;
+    this.bgTexture=this.background instanceof HTMLVideoElement?new THREE.VideoTexture(this.background):new THREE.Texture(this.background);
+    if(!(this.background instanceof HTMLVideoElement))this.bgTexture.needsUpdate=true;
+    this.bgMesh=new THREE.Mesh(new THREE.PlaneGeometry(160,110),new THREE.MeshBasicMaterial({map:this.bgTexture,transparent:true,opacity:this.settings.bgOpacity/100,depthTest:false,depthWrite:false}));
+    this.bgMesh.position.z=-100;this.camera.add(this.bgMesh);
+  }
+  reset=()=>{
+    for(const s of this.strokes){this.scene.remove(s.mesh);s.mesh.geometry.dispose();(s.mesh.material as THREE.Material).dispose();}
+    for(const d of this.drops){this.scene.remove(d.mesh);(d.mesh.material as THREE.Material).dispose();}
+    this.strokes=[];this.drops=[];this.current=null;this.mode='play';this.running=true;
+    this.tip.set(0,0,0);this.heading.set(0,0,-1);this.camera.position.set(0,2,8);
+    this.time=0;this.distance=0;this.step=0;this.bounds.makeEmpty();this.energy=0;this.pulse=0;
+    this.createStroke();
+  };
+  private loop=(now:number)=>{
+    if(this.destroyed)return;this.raf=requestAnimationFrame(this.loop);
+    const dt=Math.min(.05,(now-(this.last||now))/1000);this.last=now;
     this.syncBackground();
-    if (this.running) {
-      this.time += dt;
-      const target = Math.max(this.audio * 2.5, this.midi, this.sustain ? .2 : 0);
-      this.energy = THREE.MathUtils.damp(this.energy, target, 3, dt);
-      this.midi *= Math.exp(-dt * 3.2);
-      const speed = 1.7 + this.energy * 2.5;
-      this.travel += speed * dt;
-      this.camera.position.set(
-        Math.sin(this.time * .13) * 2.5 + Math.sin(this.time * .037) * 2,
-        Math.sin(this.time * .1) * 1.7,
-        -this.travel
-      );
-      this.camera.lookAt(
-        Math.sin(this.time * .13 + .55) * 3,
-        Math.sin(this.time * .1 + .4) * 2,
-        -this.travel - 24
-      );
-      this.spawnClock += dt * (.3 + this.settings.density / 100 * 1.1) * (1 + this.energy);
-      if (this.spawnClock >= 1) {
-        this.spawnClock -= 1;
-        this.spawn(.3 + this.energy);
-      }
-      for (const f of [...this.forms]) {
-        f.age += dt;
-        const fade = Math.min(1, f.age / 1.6, (f.life - f.age) / 3);
-        const wave = Math.sin(this.time * .42 + f.phase);
-        f.mesh.rotation.set(wave * .16, this.time * f.speed, Math.sin(this.time * .17 + f.phase) * .28);
-        f.line.rotation.copy(f.mesh.rotation);
-        const scale = 1 + Math.sin(this.time * .6 + f.phase) * .1 + this.energy * .15;
-        f.mesh.scale.setScalar(scale);
-        f.line.scale.copy(f.mesh.scale);
-        const opacity = Math.max(0, fade) * (.3 + this.settings.intensity / 170);
-        (f.mesh.material as THREE.MeshBasicMaterial).opacity = opacity * .65;
-        (f.line.material as THREE.LineBasicMaterial).opacity = opacity * .32;
-        if (f.age > f.life || f.depth > this.camera.position.z + 8) {
-          this.scene.remove(f.mesh, f.line);
-          f.mesh.geometry.dispose(); (f.mesh.material as THREE.Material).dispose();
-          f.line.geometry.dispose(); (f.line.material as THREE.Material).dispose();
-          this.forms.splice(this.forms.indexOf(f), 1);
-        }
-      }
+    if(this.mode==='play'&&this.running){
+      this.time+=dt;const target=Math.max(this.audio*3,this.midi,this.sustain?.18:0);
+      this.energy=THREE.MathUtils.damp(this.energy,target,target>this.energy?20:1.1,dt);
+      this.midi*=Math.exp(-dt*3);this.pulse*=Math.exp(-dt*14);
+      this.paint(dt);
     }
-    if (this.backdrop) (this.backdrop.material as THREE.MeshBasicMaterial).opacity = this.settings.bgOpacity / 100;
-    this.renderer.render(this.scene, this.camera);
+    for(const d of this.drops){
+      if(this.mode==='play'&&this.running){d.age+=dt;d.mesh.position.addScaledVector(d.velocity,dt);d.velocity.multiplyScalar(Math.exp(-dt*.7));}
+      (d.mesh.material as THREE.SpriteMaterial).opacity=Math.max(.05,.6*(1-d.age/d.life));
+    }
+    this.updateCamera(dt);
+    if(this.bgMesh)(this.bgMesh.material as THREE.MeshBasicMaterial).opacity=this.settings.bgOpacity/100;
+    this.renderer.render(this.scene,this.camera);
   };
-  destroy = () => {
-    this.destroyed = true;
-    cancelAnimationFrame(this.raf);
-    this.clearForms();
-    if (this.backdrop) { this.camera.remove(this.backdrop); this.backdrop.geometry.dispose(); (this.backdrop.material as THREE.Material).dispose(); }
-    this.texture?.dispose();
+  destroy=()=>{
+    this.destroyed=true;cancelAnimationFrame(this.raf);
+    this.canvas.removeEventListener('pointerdown',this.down);this.canvas.removeEventListener('pointermove',this.move);
+    this.canvas.removeEventListener('pointerup',this.up);this.canvas.removeEventListener('pointercancel',this.up);
+    this.canvas.removeEventListener('wheel',this.wheel);
+    for(const s of this.strokes){s.mesh.geometry.dispose();(s.mesh.material as THREE.Material).dispose();}
+    for(const d of this.drops)(d.mesh.material as THREE.Material).dispose();
+    this.splashTexture.dispose();this.bgTexture?.dispose();
+    if(this.bgMesh){this.bgMesh.geometry.dispose();(this.bgMesh.material as THREE.Material).dispose();}
     this.renderer.dispose();
   };
 }
