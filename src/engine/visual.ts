@@ -1,148 +1,185 @@
+import * as THREE from 'three';
 import type {Settings} from './types';
 export type PaperFormat='square'|'a4p'|'a4l'|'a3p'|'wide';
 export type PaperTexture='cotton'|'smooth'|'washi';
 export type BrushKind='wash'|'calligraphy'|'filament'|'bloom'|'splatter'|'petal';
 export type BrushConfig={kind:BrushKind;color:string;water:number};
 export type PaperConfig={format:PaperFormat;texture:PaperTexture;absorption:number};
-type Mark={x:number;y:number;r:number;angle:number;alpha:number;color:string;kind:BrushKind;born:number;life:number};
-const TAU=Math.PI*2,clamp=(v:number,a:number,b:number)=>Math.max(a,Math.min(b,v));
+type Form={mesh:THREE.Mesh;material:THREE.ShaderMaterial;born:number;life:number;seed:number;center:THREE.Vector3;radius:number;kind:BrushKind};
+const clamp=THREE.MathUtils.clamp,TAU=Math.PI*2;
+const vertex=`
+ varying vec2 vUv;varying vec3 vNormal;varying vec3 vPosition;
+ uniform float uTime;uniform float uSeed;uniform float uEnergy;
+ void main(){
+ vUv=uv;vec3 p=position;float wave=sin(uv.x*16.+uSeed*8.+uTime*.65)*sin(uv.y*9.-uTime*.38);
+ p+=normal*wave*(.028+.055*uEnergy);
+ vNormal=normalize(normalMatrix*normal);vPosition=p;
+ gl_Position=projectionMatrix*modelViewMatrix*vec4(p,1.);
+ }`;
+const fragment=`
+ precision mediump float;
+ varying vec2 vUv;varying vec3 vNormal;varying vec3 vPosition;
+ uniform vec3 uColor;uniform float uOpacity;uniform float uSeed;uniform float uTime;
+ void main(){
+ float edge=pow(abs(dot(normalize(vNormal),vec3(.24,.5,.84))),.48);
+ float threads=sin(vUv.x*177.+sin(vUv.y*21.+uSeed)*9.)*sin(vUv.y*143.+uSeed*13.);
+ float grain=.86+.14*threads;
+ float border=pow(sin(vUv.y*3.14159265),.46);
+ float vein=pow(abs(sin(vUv.x*27.+sin(vUv.y*11.)*3.+uSeed)),22.)*.12;
+ vec3 ink=mix(uColor,vec3(1.),.22*(1.-edge)+vein);
+ float alpha=uOpacity*border*grain*(.52+.48*edge);
+ gl_FragColor=vec4(ink,alpha);
+ }`;
 export class VisualEngine{
  canvas:HTMLCanvasElement;settings:Settings;audio=0;midi=0;sustain=false;running=true;
  bands={low:0,mid:0,high:0,level:0,transient:0};background:HTMLImageElement|HTMLVideoElement|null=null;
  mode:'play'|'reveal'|'print'='play';
  paperConfig:PaperConfig={format:'a4l',texture:'cotton',absorption:65};
  brushes:BrushConfig[]=[{kind:'wash',color:'#365e79',water:75},{kind:'filament',color:'#bb7a6b',water:35},{kind:'bloom',color:'#c7a35b',water:85}];
- private ctx:CanvasRenderingContext2D;private marks:Mark[]=[];private seed=12345;
- private w=1600;private h=1132;private x=800;private y=566;private angle=0;private t=0;private last=0;private raf=0;private destroyed=false;
- private pigment=document.createElement('canvas');private pigmentCtx=this.pigment.getContext('2d')!;
- private paper=document.createElement('canvas');private paperCtx=this.paper.getContext('2d')!;
- private frame=0;private cameraX=800;private cameraY=566;private zoom=1;private rotation=0;
- private targetZoom=1;private targetRotation=0;private shotZoom=1;private shotAngle=0;private fov=53;
- private pointer:{x:number;y:number}|null=null;private tick=0;private nextColor=0;
+ private renderer:THREE.WebGLRenderer;private scene=new THREE.Scene();private camera=new THREE.PerspectiveCamera(52,1,.04,180);
+ private forms:Form[]=[];private seed=14217;private raf=0;private last=0;private time=0;private activeClock=0;private destroyed=false;
+ private cursor=new THREE.Vector3();private heading=new THREE.Vector3(.3,.1,-1).normalize();private focus=new THREE.Vector3();
+ private camPhase=0;private camClock=0;private camDistance=9;private camFov=52;private shotAngle=0;private shotElevation=0;private shotZoom=1;private printFov=53;
+ private pointer:{x:number;y:number}|null=null;private energy=0;private accent=0;private count=0;
+ private backgroundTexture:THREE.Texture|null=null;private backgroundMesh:THREE.Mesh|null=null;private bgRef:HTMLImageElement|HTMLVideoElement|null=null;
  constructor(canvas:HTMLCanvasElement,settings:Settings){
-  this.canvas=canvas;this.settings=settings;this.ctx=canvas.getContext('2d',{alpha:false})!;
-  this.configurePaper(this.paperConfig);this.resize();
+  this.canvas=canvas;this.settings=settings;
+  this.renderer=new THREE.WebGLRenderer({canvas,alpha:false,antialias:true,preserveDrawingBuffer:true,powerPreference:'high-performance'});
+  this.renderer.outputColorSpace=THREE.SRGBColorSpace;
+  this.scene.background=new THREE.Color('#ffffff');this.scene.fog=new THREE.Fog('#ffffff',30,90);
+  this.camera.position.set(0,2,10);
   canvas.addEventListener('pointerdown',this.down);canvas.addEventListener('pointermove',this.move);
   canvas.addEventListener('pointerup',this.up);canvas.addEventListener('pointercancel',this.up);
-  canvas.addEventListener('wheel',this.wheel,{passive:false});this.raf=requestAnimationFrame(this.loop);
+  canvas.addEventListener('wheel',this.wheel,{passive:false});
+  this.resize();this.raf=requestAnimationFrame(this.loop);
  }
  private rand(){this.seed=(Math.imul(this.seed,1664525)+1013904223)>>>0;return this.seed/4294967296;}
  private range(a:number,b:number){return a+(b-a)*this.rand();}
- configurePaper=(p:PaperConfig)=>{
-  this.paperConfig={...p};const ratios:Record<PaperFormat,number>={square:1,a4p:210/297,a4l:297/210,a3p:297/420,wide:16/9};
-  const ratio=ratios[p.format];this.w=ratio>=1?1600:Math.round(1600*ratio);this.h=ratio>=1?Math.round(1600/ratio):1600;
-  this.paper.width=this.pigment.width=this.w;this.paper.height=this.pigment.height=this.h;
-  this.createTexture();this.reset();
- };
- setBrushes=(b:BrushConfig[])=>{this.brushes=b.slice(0,3).map(x=>({...x}));};
- private createTexture(){
-  const c=this.paperCtx;c.fillStyle='#fffdfb';c.fillRect(0,0,this.w,this.h);
-  const img=c.getImageData(0,0,this.w,this.h),d=img.data;
-  const strength=this.paperConfig.texture==='smooth'?3:this.paperConfig.texture==='washi'?14:9;
-  for(let i=0;i<d.length;i+=4){const n=(this.rand()-.5)*strength;d[i]=clamp(252+n,0,255);d[i+1]=clamp(251+n,0,255);d[i+2]=clamp(248+n,0,255);}
-  c.putImageData(img,0,0);
- }
- resize=()=>{const w=Math.max(1,innerWidth),h=Math.max(1,innerHeight),d=Math.min(devicePixelRatio||1,1.7);this.canvas.width=Math.round(w*d);this.canvas.height=Math.round(h*d);this.canvas.style.width=w+'px';this.canvas.style.height=h+'px';};
- private pigmentColor(){const colors=this.settings.colors.filter(x=>/^#[0-9a-f]{6}$/i.test(x));return colors.length?colors[this.nextColor++%colors.length]:'#527b78';}
- private rgba(hex:string,a:number){const h=/^#[0-9a-f]{6}$/i.test(hex)?hex:'#527b78';return 'rgba('+parseInt(h.slice(1,3),16)+','+parseInt(h.slice(3,5),16)+','+parseInt(h.slice(5,7),16)+','+clamp(a,0,1)+')';}
- private deposit(m:Mark,c:CanvasRenderingContext2D=this.pigmentCtx){
-  const r=m.r,cx=m.x,cy=m.y;c.save();c.globalCompositeOperation='multiply';
-  const wash=m.kind==='wash'||m.kind==='bloom';const elongated=m.kind==='filament'||m.kind==='calligraphy';
-  const rings=wash?4:2;
-  for(let j=rings;j>=0;j--){const rr=r*(.3+j/rings*.8);const g=c.createRadialGradient(cx,cy,0,cx,cy,rr);
-   g.addColorStop(0,this.rgba(m.color,m.alpha*.25));g.addColorStop(.7,this.rgba(m.color,m.alpha*(wash?.12:.25)));g.addColorStop(.94,this.rgba(m.color,m.alpha*.11));g.addColorStop(1,this.rgba(m.color,0));
-   c.fillStyle=g;c.beginPath();c.ellipse(cx,cy,rr,rr*(elongated?.18:1),m.angle,0,TAU);c.fill();
+ resize=()=>{const w=Math.max(1,innerWidth),h=Math.max(1,innerHeight);this.renderer.setPixelRatio(Math.min(devicePixelRatio||1,w<750?1.35:1.75));this.renderer.setSize(w,h,false);this.camera.aspect=w/h;this.camera.updateProjectionMatrix();};
+ configurePaper=(p:PaperConfig)=>{this.paperConfig={...p};};
+ setBrushes=(b:BrushConfig[])=>{this.brushes=b.slice(0,3).map(v=>({...v}));};
+ private makeGeometry(kind:BrushKind,seed:number){
+  const segments=64,rows=8,verts:number[]=[],uvs:number[]=[],indices:number[]=[];
+  const width:Record<BrushKind,number>={wash:1.7,calligraphy:.75,filament:.22,bloom:1.4,splatter:.48,petal:1.2};
+  const length=kind==='filament'?6:kind==='bloom'?3.5:4.6;
+  for(let i=0;i<=segments;i++){const t=i/segments,theta=t*TAU*(kind==='bloom'?1.3:.65);
+   const radial=(.2+.8*Math.sin(Math.PI*t))*(.7+.3*Math.sin(t*12+seed));
+   for(let j=0;j<=rows;j++){const v=j/rows-.5;
+    const ribbon=width[kind]*v*radial;
+    const x=Math.sin(theta)*(.9+t*1.3)+Math.cos(theta)*ribbon;
+    const y=(t-.5)*length+Math.sin(t*12+seed)*.24+ribbon*.2;
+    const z=Math.cos(theta)*(.9+t*1.3)+Math.sin(theta)*ribbon+Math.sin(v*TAU+t*13)*.11;
+    verts.push(x,y,z);uvs.push(t,j/rows);
+    if(i<segments&&j<rows){const a=i*(rows+1)+j,b=a+rows+1;indices.push(a,b,a+1,b,b+1,a+1);}
+   }
   }
-  c.strokeStyle=this.rgba(m.color,m.alpha*.16);c.lineWidth=Math.max(.5,r*.035);c.beginPath();
-  for(let i=0;i<=24;i++){const a=i/24*TAU,rr=r*(.85+.1*Math.sin(a*9+cx*.03)+.05*Math.sin(a*17+cy*.02));const x=cx+Math.cos(a)*rr,y=cy+Math.sin(a)*rr;if(!i)c.moveTo(x,y);else c.lineTo(x,y);}c.stroke();
-  c.restore();
+  const geo=new THREE.BufferGeometry();geo.setAttribute('position',new THREE.Float32BufferAttribute(verts,3));geo.setAttribute('uv',new THREE.Float32BufferAttribute(uvs,2));geo.setIndex(indices);geo.computeVertexNormals();return geo;
  }
- private spawn(x:number,y:number,r:number,color:string,alpha:number,kind:BrushKind){
-  const margin=Math.min(this.w,this.h)*.07;
-  const m:Mark={x:clamp(x,margin,this.w-margin),y:clamp(y,margin,this.h-margin),r:clamp(r,1,100),angle:this.angle,alpha,color,kind,born:this.t,life:this.range(9,19)};
-  this.marks.push(m);this.deposit(m);
-  if(this.marks.length>950)this.marks.splice(0,100);
+ private spawn(pitch=60,velocity=.6){
+  if(this.forms.length>=18){const old=this.forms.shift()!;this.dispose(old);}
+  const brush=this.brushes[this.count%Math.max(1,this.brushes.length)]||this.brushes[0];this.count++;
+  const seed=this.rand()*100;const colors=this.settings.colors.filter(c=>/^#[0-9a-f]{6}$/i.test(c));
+  const color=brush.color||colors[this.count%Math.max(1,colors.length)]||'#517b79';
+  const material=new THREE.ShaderMaterial({vertexShader:vertex,fragmentShader:fragment,side:THREE.DoubleSide,transparent:true,depthWrite:false,uniforms:{uColor:{value:new THREE.Color(color)},uOpacity:{value:0},uTime:{value:0},uSeed:{value:seed},uEnergy:{value:0}}});
+  const geometry=this.makeGeometry(brush.kind,seed);
+  const mesh=new THREE.Mesh(geometry,material);mesh.frustumCulled=false;
+  const angle=this.count*2.39996323+pitch*.025,rad=Math.sqrt((this.count%11)/11)*2.2;
+  const center=new THREE.Vector3(Math.cos(angle)*rad,Math.sin(angle*1.3)*1.65,Math.sin(angle)*rad);
+  mesh.position.copy(center);mesh.rotation.set(this.rand()*TAU,this.rand()*TAU,this.rand()*TAU);
+  mesh.scale.setScalar(.3+velocity*.3);this.scene.add(mesh);
+  this.forms.push({mesh,material,born:this.time,life:this.range(14,27),seed,center,radius:2.5,kind:brush.kind});
  }
- note=(pitch:number,velocity:number)=>{
-  if(this.mode!=='play'||velocity<=0)return;const v=clamp(velocity/127,0,1);this.midi=Math.max(this.midi,v);
-  const b=this.brushes[Math.abs(pitch)%Math.max(1,this.brushes.length)];const c=b?.color||this.pigmentColor();
-  const a=pitch*2.399963;const rx=this.w*.28,ry=this.h*.28;
-  // Golden-angle distribution spreads notes throughout the composition.
-  this.x=this.w/2+Math.cos(a)*rx*(.35+.65*v);this.y=this.h/2+Math.sin(a)*ry*(.35+.65*v);
-  this.angle=a+Math.PI/2;this.spawn(this.x,this.y,10+v*30,c,.2+v*.3,b?.kind||'wash');
- };
- private paint(dt:number,signal:number){
-  const low=this.bands.low,mid=this.bands.mid,high=this.bands.high;
-  this.angle+=(Math.sin(this.t*.8+this.x*.008)+Math.cos(this.t*.6+this.y*.007))*dt*(.6+this.settings.freedom/90);
-  const speed=(30+signal*110)*(this.settings.intensity/100+.4);
-  this.x+=Math.cos(this.angle)*speed*dt;this.y+=Math.sin(this.angle)*speed*dt;
-  const cx=this.w/2,cy=this.h/2;const dx=(this.x-cx)/(this.w*.37),dy=(this.y-cy)/(this.h*.37);
-  // Soft restoring force prevents edge congestion without a visible frame.
-  this.angle+=Math.atan2(cy-this.y,cx-this.x)*dt*.025*(dx*dx+dy*dy);
-  const margin=Math.min(this.w,this.h)*.08;
-  if(this.x<margin||this.x>this.w-margin||this.y<margin||this.y>this.h-margin){this.x=clamp(this.x,margin,this.w-margin);this.y=clamp(this.y,margin,this.h-margin);this.angle=Math.atan2(cy-this.y,cx-this.x);}
-  const brush=this.brushes[Math.floor(this.t/2.5)%Math.max(1,this.brushes.length)];const kind=brush?.kind||'wash';
-  const size:Record<BrushKind,number>={wash:23,calligraphy:7,filament:3,bloom:29,splatter:5,petal:17};
-  const r=size[kind]*(1+low*1.7+mid*.5)*(1+(brush?.water||50)/200);
-  const orbit=this.t*(1.4+high*4),spread=kind==='bloom'?50:kind==='petal'?30:10;
-  this.spawn(this.x+Math.cos(orbit)*spread,this.y+Math.sin(orbit)*spread,r,brush?.color||this.pigmentColor(),clamp(.1+signal*.24,.08,.48),kind);
-  if(high>.15&&this.rand()<.3)this.spawn(this.x+this.range(-55,55),this.y+this.range(-55,55),this.range(1,5),brush?.color||this.pigmentColor(),.2,'splatter');
+ private dispose(f:Form){this.scene.remove(f.mesh);f.mesh.geometry.dispose();f.material.dispose();}
+ note=(pitch:number,velocity:number)=>{if(this.mode!=='play'||velocity<=0)return;const v=clamp(velocity/127,0,1);this.midi=Math.max(this.midi,v);this.accent=Math.max(this.accent,v);this.spawn(pitch,v);this.camPhase=(this.camPhase+(v>.65?1:0))%5;};
+ private animateForms(dt:number){
+  for(let i=this.forms.length-1;i>=0;i--){const f=this.forms[i];const age=this.time-f.born;if(age>=f.life){this.dispose(f);this.forms.splice(i,1);continue;}
+   const rise=clamp(age/2.3,0,1),fall=clamp((f.life-age)/4.5,0,1),life=Math.min(rise,fall);
+   const breathe=1+.08*Math.sin(this.time*.8+f.seed);
+   f.mesh.scale.setScalar((.6+.7*rise)*breathe);
+   f.mesh.rotation.y+=dt*(.06+this.energy*.2);f.mesh.rotation.x+=dt*.035;
+   f.mesh.position.y=f.center.y+Math.sin(this.time*.35+f.seed)*.18;
+   f.material.uniforms.uOpacity.value=life*(.55+this.energy*.17);
+   f.material.uniforms.uTime.value=this.time-f.born;f.material.uniforms.uEnergy.value=this.energy;
+  }
  }
- private rebuild(){
-  // Redraw live marks in one bounded pass; old marks fade without ever staining the canvas.
-  const c=this.pigmentCtx;c.clearRect(0,0,this.w,this.h);
-  for(const m of this.marks){const age=this.t-m.born;const f=clamp((m.life-age)/Math.min(4,m.life*.35),0,1);if(f<=0)continue;this.deposit({...m,alpha:m.alpha*f},c);}
- }
- private camera(dt:number){
-  const d=(a:number,b:number,k:number)=>a+(b-a)*(1-Math.exp(-dt*k));
+ private updateCamera(dt:number){
+  const smooth=(a:number,b:number,k:number)=>a+(b-a)*(1-Math.exp(-dt*k));
   if(this.mode==='play'){
-   const phase=Math.floor(this.t/8)%4;
-   this.targetZoom=[.96,1.5,1.13,1.85][phase]*(1+.08*Math.sin(this.t*.8));
-   this.targetRotation=[0,.08,-.1,.16][phase]+Math.sin(this.t*.18)*.04;
-   const travel=.1*Math.min(this.w,this.h);
-   this.cameraX=d(this.cameraX,this.w/2+Math.sin(this.t*.2)*travel,1.2);
-   this.cameraY=d(this.cameraY,this.h/2+Math.cos(this.t*.16)*travel,1.2);
+   this.camClock+=dt;
+   if(this.camClock>7){this.camPhase=(this.camPhase+1)%5;this.camClock=0;}
+   const t=this.time;const distances=[9,4.2,12,5.7,3.5];
+   this.camDistance=smooth(this.camDistance,distances[this.camPhase]*(1-.18*this.energy),1.2);
+   const angle=t*[.14,.33,-.17,.48,-.38][this.camPhase];
+   const target=new THREE.Vector3(Math.sin(t*.17)*1.1,Math.sin(t*.21)*.5,Math.cos(t*.15)*.7);
+   this.focus.lerp(target,1-Math.exp(-dt*1.5));
+   const desired=new THREE.Vector3(Math.sin(angle)*this.camDistance*.9,Math.sin(angle*.7)*2.2,Math.cos(angle)*this.camDistance).add(this.focus);
+   this.camera.position.lerp(desired,1-Math.exp(-dt*1.5));this.camera.lookAt(this.focus);
+   this.camFov=smooth(this.camFov,[55,69,43,79,36][this.camPhase],1.1);this.camera.fov=this.camFov;this.camera.updateProjectionMatrix();
+   this.camera.rotateZ(Math.sin(t*.35)*.035);
   }else{
-   this.targetZoom=this.shotZoom*53/this.fov;this.targetRotation=this.shotAngle*Math.PI/180;
-   this.cameraX=d(this.cameraX,this.w/2,2);this.cameraY=d(this.cameraY,this.h/2,2);
+   const bounds=this.computeBounds(),size=bounds.getSize(new THREE.Vector3()),center=bounds.getCenter(new THREE.Vector3());
+   const aspect=this.camera.aspect,fov=THREE.MathUtils.degToRad(this.printFov);
+   const dist=Math.max(5,(Math.max(size.y,size.x/Math.max(.5,aspect))*.5)/Math.tan(fov/2)+size.z*.5+1.4)*this.shotZoom;
+   const theta=THREE.MathUtils.degToRad(this.shotAngle),phi=THREE.MathUtils.degToRad(this.shotElevation);
+   const desired=center.clone().add(new THREE.Vector3(Math.sin(theta)*Math.cos(phi)*dist,Math.sin(phi)*dist,Math.cos(theta)*Math.cos(phi)*dist));
+   this.camera.position.lerp(desired,1-Math.exp(-dt*3));this.focus.lerp(center,1-Math.exp(-dt*3));this.camera.lookAt(this.focus);
+   this.camera.fov=this.printFov;this.camera.updateProjectionMatrix();
   }
-  this.zoom=d(this.zoom,this.targetZoom,1.2);this.rotation=d(this.rotation,this.targetRotation,1.2);
  }
- private render(c:CanvasRenderingContext2D,w:number,h:number,print=false){
-  c.save();c.fillStyle='#fff';c.fillRect(0,0,w,h);c.translate(w/2,h/2);
-  c.rotate(print?0:this.rotation);const z=Math.min(w/this.w,h/this.h)*(print?1:this.zoom);c.scale(z,z);
-  c.translate(-(print?this.w/2:this.cameraX),-(print?this.h/2:this.cameraY));
-  // During play the paper texture is hidden; print can restore subtle cotton grain.
-  if(print)c.drawImage(this.paper,0,0);c.drawImage(this.pigment,0,0);
-  if(this.background&&((this.background instanceof HTMLImageElement&&this.background.complete)||(this.background instanceof HTMLVideoElement&&this.background.readyState>=2))){c.globalAlpha=this.settings.bgOpacity/100;c.drawImage(this.background,0,0,this.w,this.h);}
-  c.restore();
+ private computeBounds(){
+  const b=new THREE.Box3();for(const f of this.forms)b.expandBySphere(new THREE.Sphere(f.mesh.position,3.5*f.mesh.scale.x));
+  if(b.isEmpty())b.setFromCenterAndSize(new THREE.Vector3(),new THREE.Vector3(8,7,8));return b;
+ }
+ private syncBackground(){
+  if(this.background===this.bgRef)return;this.bgRef=this.background;
+  if(this.backgroundMesh){this.camera.remove(this.backgroundMesh);this.backgroundMesh.geometry.dispose();(this.backgroundMesh.material as THREE.Material).dispose();this.backgroundMesh=null;}
+  this.backgroundTexture?.dispose();this.backgroundTexture=null;if(!this.background)return;
+  const tex=this.background instanceof HTMLVideoElement?new THREE.VideoTexture(this.background):new THREE.Texture(this.background);
+  tex.needsUpdate=true;this.backgroundTexture=tex;
+  this.backgroundMesh=new THREE.Mesh(new THREE.PlaneGeometry(140,90),new THREE.MeshBasicMaterial({map:tex,transparent:true,opacity:this.settings.bgOpacity/100,depthTest:false,depthWrite:false}));
+  this.backgroundMesh.position.z=-85;this.camera.add(this.backgroundMesh);
  }
  private loop=(now:number)=>{
-  if(this.destroyed)return;this.raf=requestAnimationFrame(this.loop);const dt=Math.min(.05,(now-(this.last||now))/1000);this.last=now;
+  if(this.destroyed)return;this.raf=requestAnimationFrame(this.loop);
+  const dt=Math.min(.05,(now-(this.last||now))/1000);this.last=now;
   if(this.mode==='play'&&this.running){
-   this.t+=dt;const signal=Math.max(this.audio*2,this.bands.low*.9+this.bands.mid*.8+this.bands.high*.5,this.midi);
-   if(signal>.045){this.tick+=dt;if(this.tick>=1/30){this.paint(this.tick,signal);this.tick=0;}}
-   this.midi*=Math.exp(-dt*5);
-   this.marks=this.marks.filter(m=>this.t-m.born<m.life);
-   // 15 Hz pigment redraw keeps the evolving composition light.
-   this.frame+=dt;if(this.frame>1/15){this.rebuild();this.frame=0;}
+   this.time+=dt;const signal=Math.max(this.audio*2,this.bands.low*.8+this.bands.mid*.8+this.bands.high*.5,this.midi);
+   this.energy+=(signal-this.energy)*(1-Math.exp(-dt*7));
+   this.activeClock+=dt;
+   if(signal>.075&&this.activeClock>.9+(.7-this.settings.density/180)){this.spawn(60+Math.round(this.bands.mid*24),clamp(signal,0,1));this.activeClock=0;}
+   this.midi*=Math.exp(-dt*5);this.accent*=Math.exp(-dt*6);
+   this.animateForms(dt);
   }
-  this.camera(dt);this.render(this.ctx,this.canvas.width,this.canvas.height);
+  this.syncBackground();this.updateCamera(dt);
+  if(this.backgroundMesh)(this.backgroundMesh.material as THREE.MeshBasicMaterial).opacity=this.settings.bgOpacity/100;
+  this.renderer.render(this.scene,this.camera);
  };
- reveal=()=>{this.mode='reveal';this.running=false;this.shotZoom=1;this.shotAngle=0;this.fov=53;this.rebuild();};
+ reveal=()=>{this.mode='reveal';this.running=false;this.shotAngle=0;this.shotElevation=0;this.shotZoom=1;this.printFov=53;};
  printMode=()=>{if(this.mode==='play')this.reveal();this.mode='print';};
  resume=()=>{this.mode='play';this.running=true;};
- setPrintView=(angle:number,_elevation:number,zoom:number)=>{this.shotAngle=angle;this.shotZoom=clamp(zoom,.3,3);};
- setPrintFov=(fov:number)=>{this.fov=clamp(fov,18,100);};
- rotatePrint=(degrees:number)=>{this.shotAngle+=degrees;};
- zoomPrint=(factor:number)=>{this.shotZoom=clamp(this.shotZoom*factor,.3,3);};
- resetPrint=()=>{this.shotZoom=1;this.shotAngle=0;this.fov=53;};
+ setPrintView=(a:number,e:number,z:number)=>{this.shotAngle=a;this.shotElevation=clamp(e,-85,85);this.shotZoom=clamp(z,.3,3);};
+ setPrintFov=(v:number)=>{this.printFov=clamp(v,18,100);};
+ rotatePrint=(v:number)=>{this.shotAngle+=v;};zoomPrint=(v:number)=>{this.shotZoom=clamp(this.shotZoom*v,.3,3);};
+ resetPrint=()=>{this.shotAngle=0;this.shotElevation=0;this.shotZoom=1;this.printFov=53;};
  private down=(e:PointerEvent)=>{if(this.mode==='print'){this.pointer={x:e.clientX,y:e.clientY};this.canvas.setPointerCapture(e.pointerId);}};
- private move=(e:PointerEvent)=>{if(!this.pointer||this.mode!=='print')return;this.shotAngle+=(e.clientX-this.pointer.x)*.15;this.shotZoom=clamp(this.shotZoom*Math.exp((e.clientY-this.pointer.y)*.002),.3,3);this.pointer={x:e.clientX,y:e.clientY};};
+ private move=(e:PointerEvent)=>{if(!this.pointer||this.mode!=='print')return;this.shotAngle+=(e.clientX-this.pointer.x)*.18;this.shotElevation=clamp(this.shotElevation+(e.clientY-this.pointer.y)*.12,-85,85);this.pointer={x:e.clientX,y:e.clientY};};
  private up=()=>{this.pointer=null;};
- private wheel=(e:WheelEvent)=>{if(this.mode==='print'){e.preventDefault();this.zoomPrint(Math.exp(-e.deltaY*.001));}};
- exportSheet=(width=3000)=>{const c=document.createElement('canvas');c.width=width;c.height=Math.round(width*this.h/this.w);this.render(c.getContext('2d')!,c.width,c.height,true);return c.toDataURL('image/png');};
- exportPrint=(size=3000,aspect=1)=>{const c=document.createElement('canvas');c.width=size;c.height=Math.round(size/aspect);this.render(c.getContext('2d')!,c.width,c.height,true);return c.toDataURL('image/png');};
- reset=()=>{this.marks=[];this.pigmentCtx.clearRect(0,0,this.w,this.h);this.x=this.cameraX=this.w/2;this.y=this.cameraY=this.h/2;this.angle=0;this.t=0;this.tick=0;this.frame=0;this.zoom=1;this.rotation=0;this.mode='play';this.running=true;};
- destroy=()=>{this.destroyed=true;cancelAnimationFrame(this.raf);this.canvas.removeEventListener('pointerdown',this.down);this.canvas.removeEventListener('pointermove',this.move);this.canvas.removeEventListener('pointerup',this.up);this.canvas.removeEventListener('pointercancel',this.up);this.canvas.removeEventListener('wheel',this.wheel);};
+ private wheel=(e:WheelEvent)=>{if(this.mode==='print'){e.preventDefault();this.zoomPrint(Math.exp(e.deltaY*.001));}};
+ exportPrint=(size=3000,aspect=1)=>{
+  const w=size,h=Math.round(size/aspect),old=new THREE.Vector2();this.renderer.getSize(old);
+  const ratio=this.renderer.getPixelRatio(),cameraPos=this.camera.position.clone(),cameraQuat=this.camera.quaternion.clone(),oldAspect=this.camera.aspect,oldFov=this.camera.fov;
+  try{
+   this.renderer.setPixelRatio(1);this.renderer.setSize(w,h,false);this.camera.aspect=w/h;this.camera.fov=this.printFov;this.camera.updateProjectionMatrix();
+   const bounds=this.computeBounds(),dim=bounds.getSize(new THREE.Vector3()),center=bounds.getCenter(new THREE.Vector3());
+   const dist=Math.max(5,(Math.max(dim.y,dim.x/Math.max(.5,this.camera.aspect))*.5)/Math.tan(THREE.MathUtils.degToRad(this.printFov)/2)+dim.z*.5+1.4)*this.shotZoom;
+   const a=THREE.MathUtils.degToRad(this.shotAngle),e=THREE.MathUtils.degToRad(this.shotElevation);
+   this.camera.position.copy(center).add(new THREE.Vector3(Math.sin(a)*Math.cos(e)*dist,Math.sin(e)*dist,Math.cos(a)*Math.cos(e)*dist));this.camera.lookAt(center);
+   this.renderer.render(this.scene,this.camera);return this.canvas.toDataURL('image/png');
+  }finally{
+   this.renderer.setPixelRatio(ratio);this.renderer.setSize(old.x,old.y,false);this.camera.aspect=oldAspect;this.camera.fov=oldFov;this.camera.position.copy(cameraPos);this.camera.quaternion.copy(cameraQuat);this.camera.updateProjectionMatrix();
+  }
+ };
+ exportSheet=(width=3000)=>{const ratios:Record<PaperFormat,number>={square:1,a4p:210/297,a4l:297/210,a3p:297/420,wide:16/9};return this.exportPrint(width,ratios[this.paperConfig.format]);};
+ reset=()=>{for(const f of this.forms)this.dispose(f);this.forms=[];this.time=0;this.activeClock=0;this.count=0;this.mode='play';this.running=true;this.camera.position.set(0,2,10);this.focus.set(0,0,0);this.camPhase=0;this.camClock=0;};
+ destroy=()=>{this.destroyed=true;cancelAnimationFrame(this.raf);this.canvas.removeEventListener('pointerdown',this.down);this.canvas.removeEventListener('pointermove',this.move);this.canvas.removeEventListener('pointerup',this.up);this.canvas.removeEventListener('pointercancel',this.up);this.canvas.removeEventListener('wheel',this.wheel);for(const f of this.forms)this.dispose(f);if(this.backgroundMesh){this.backgroundMesh.geometry.dispose();(this.backgroundMesh.material as THREE.Material).dispose();}this.backgroundTexture?.dispose();this.renderer.dispose();};
 }
