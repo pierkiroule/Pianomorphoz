@@ -127,7 +127,7 @@ export class VisualEngine{
   }
  }
  private computeBounds(){
-  const b=new THREE.Box3();for(const f of this.forms)b.expandBySphere(new THREE.Sphere(f.mesh.position,3.5*f.mesh.scale.x));
+  const b=new THREE.Box3();for(const f of this.forms){const r=3.5*f.mesh.scale.x;const d=new THREE.Vector3(r,r,r);b.expandByPoint(f.mesh.position.clone().sub(d));b.expandByPoint(f.mesh.position.clone().add(d));}
   if(b.isEmpty())b.setFromCenterAndSize(new THREE.Vector3(),new THREE.Vector3(8,7,8));return b;
  }
  private syncBackground(){
