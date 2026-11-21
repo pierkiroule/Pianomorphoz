@@ -101,9 +101,9 @@ export class VisualEngine{
    const a=t*([1,2.7,5,1.4,8,3][this.gesture])+i*TAU/density;
    const spread=[8,42,12,80,65,30][this.gesture]*(1+mid*1.5);
    const px=this.x+Math.cos(a)*spread,py=this.y+Math.sin(a)*spread;
-   const r=[11,19,4,27,3,13][this.gesture]*(1+low*2.5+this.noteEnergy*.8)*(1+(brush?.water||50)/170);
+   const kind=brush?.kind||'wash';const kindScale:Record<BrushKind,number>={wash:1.7,calligraphy:.55,filament:.2,bloom:1.9,splatter:.3,petal:1.15};const r=[11,19,4,27,3,13][this.gesture]*(1+low*2.5+this.noteEnergy*.8)*(1+(brush?.water||50)/170)*kindScale[kind];
    const alpha=Math.min(.48,.06+signal*.23+this.noteEnergy*.08);
-   this.mark(px,py,r,color,alpha,this.gesture);
+   this.mark(px,py,r,color,alpha,kind==='filament'||kind==='calligraphy'?2:kind==='bloom'?3:this.gesture);
   }
   if(high>.12&&this.rand()<Math.min(.8,high*dt*24))this.mark(this.x+this.range(-90,90),this.y+this.range(-90,90),this.range(1,5),this.color(),.3,4);
  }
