@@ -23,11 +23,11 @@ const fragment=`
  void main(){
  float edge=pow(abs(dot(normalize(vNormal),vec3(.24,.5,.84))),.48);
  float threads=sin(vUv.x*177.+sin(vUv.y*21.+uSeed)*9.)*sin(vUv.y*143.+uSeed*13.);
- float grain=.86+.14*threads;
+ float grain=.80+.20*threads;float wash=sin(vUv.x*33.+sin(vUv.y*41.+uSeed)*2.)*sin(vUv.y*37.+uSeed);
  float border=pow(sin(vUv.y*3.14159265),.46);
  float vein=pow(abs(sin(vUv.x*27.+sin(vUv.y*11.)*3.+uSeed)),22.)*.12;
- vec3 ink=mix(uColor,vec3(1.),.22*(1.-edge)+vein);
- float alpha=uOpacity*border*grain*(.52+.48*edge);
+ vec3 ink=mix(uColor,vec3(1.),.18*(1.-edge)+vein+.12*max(0.,wash));
+ float alpha=uOpacity*border*grain*(.40+.60*edge)*(.83+.17*wash);
  gl_FragColor=vec4(ink,alpha);
  }`;
 export class VisualEngine{
@@ -86,23 +86,41 @@ export class VisualEngine{
   const color=brush.color||colors[this.count%Math.max(1,colors.length)]||'#517b79';
   const material=new THREE.ShaderMaterial({vertexShader:vertex,fragmentShader:fragment,side:THREE.DoubleSide,transparent:true,depthWrite:false,uniforms:{uColor:{value:new THREE.Color(color)},uOpacity:{value:0},uTime:{value:0},uSeed:{value:seed},uEnergy:{value:0}}});
   const geometry=this.makeGeometry(brush.kind,seed);
-  const mesh=new THREE.Mesh(geometry,material);mesh.frustumCulled=false;
+  const mesh=new THREE.Mesh(geometry,material);
+  // Hand-drawn hairline ink contours follow the exact watercolor ribbon edges.
+  const pos=geometry.getAttribute('position');const rows=8,segments=64;
+  for(const edge of [0,rows]){
+   const points:THREE.Vector3[]=[];
+   for(let i=0;i<=segments;i++){
+    const k=i*(rows+1)+edge;
+    points.push(new THREE.Vector3(pos.getX(k),pos.getY(k),pos.getZ(k)));
+   }
+   const contour=new THREE.Line(new THREE.BufferGeometry().setFromPoints(points),new THREE.LineBasicMaterial({color:edge===0?'#243d46':'#4a5350',transparent:true,opacity:.45,depthWrite:false}));
+   contour.renderOrder=2;mesh.add(contour);
+  }
+  // Fine central ink filament, independent from the transparent pigment surface.
+  const spine:THREE.Vector3[]=[];
+  for(let i=0;i<=segments;i++){
+   const k=i*(rows+1)+Math.floor(rows/2);
+   spine.push(new THREE.Vector3(pos.getX(k),pos.getY(k),pos.getZ(k)+.012));
+  }
+  mesh.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(spine),new THREE.LineBasicMaterial({color:'#2d4245',transparent:true,opacity:.24,depthWrite:false})));mesh.frustumCulled=false;
   const angle=this.count*2.39996323+pitch*.025,rad=Math.sqrt((this.count%11)/11)*2.2;
   const center=persistent?new THREE.Vector3(0,0,0):new THREE.Vector3(Math.cos(angle)*rad,Math.sin(angle*1.3)*1.65,Math.sin(angle)*rad);
   mesh.position.copy(center);mesh.rotation.set(persistent?0:this.rand()*TAU,persistent?0:this.rand()*TAU,persistent?0:this.rand()*TAU);
   mesh.scale.setScalar(.3+velocity*.3);this.scene.add(mesh);
   const form={mesh,material,born:this.time,life:persistent?Infinity:this.range(14,27),seed,center,radius:2.5,kind:brush.kind};this.forms.push(form);if(persistent)this.idleForm=form;
  }
- private dispose(f:Form){this.scene.remove(f.mesh);f.mesh.geometry.dispose();f.material.dispose();}
+ private dispose(f:Form){this.scene.remove(f.mesh);f.mesh.traverse(child=>{if(child instanceof THREE.Line){child.geometry.dispose();(child.material as THREE.Material).dispose();}});f.mesh.geometry.dispose();f.material.dispose();}
  note=(pitch:number,velocity:number)=>{if(this.mode!=='play'||velocity<=0)return;const v=clamp(velocity/127,0,1);this.midi=Math.max(this.midi,v);this.accent=Math.max(this.accent,v);this.spawn(pitch,v);this.camPhase=(this.camPhase+(v>.65?1:0))%5;};
  private animateForms(dt:number){
   for(let i=this.forms.length-1;i>=0;i--){const f=this.forms[i];const age=this.time-f.born;if(age>=f.life){this.dispose(f);this.forms.splice(i,1);continue;}
    const persistent=f===this.idleForm;const rise=persistent?1:clamp(age/2.3,0,1),fall=persistent?1:clamp((f.life-age)/4.5,0,1),life=Math.min(rise,fall);
    const breathe=1+.08*Math.sin(this.time*.8+f.seed);
    f.mesh.scale.setScalar((persistent?1.25+this.energy*.95:.6+.7*rise)*breathe);
-   f.mesh.rotation.y+=dt*(.06+this.energy*.2);f.mesh.rotation.x+=dt*.035;
+   f.mesh.rotation.y+=dt*(.055+this.energy*.15);f.mesh.rotation.x+=dt*.025;
    f.mesh.position.y=f.center.y+Math.sin(this.time*.35+f.seed)*.18;
-   f.material.uniforms.uOpacity.value=life*(persistent?.95+this.energy*.05:.65+this.energy*.17);
+   f.material.uniforms.uOpacity.value=life*(persistent?.72+this.energy*.12:.48+this.energy*.20);
    f.material.uniforms.uTime.value=this.time-f.born;f.material.uniforms.uEnergy.value=this.energy;
   }
  }
@@ -112,11 +130,11 @@ export class VisualEngine{
    this.camClock+=dt;
    if(this.camClock>7){this.camPhase=(this.camPhase+1)%5;this.camClock=0;}
    const t=this.time;const distances=[9,4.2,12,5.7,3.5];
-   this.camDistance=smooth(this.camDistance,distances[this.camPhase]*(1-.18*this.energy),1.2);
+   this.camDistance=smooth(this.camDistance,Math.max(6,distances[this.camPhase])*(1-.12*this.energy),.65);
    const angle=t*[.14,.33,-.17,.48,-.38][this.camPhase];
    const target=new THREE.Vector3(Math.sin(t*.17)*.25,Math.sin(t*.21)*.15,0);
    this.focus.lerp(target,1-Math.exp(-dt*1.5));
-   const desired=new THREE.Vector3(Math.sin(angle)*this.camDistance*.9,Math.sin(angle*.7)*2.2,Math.cos(angle)*this.camDistance).add(this.focus);
+   const desired=new THREE.Vector3(Math.sin(angle)*this.camDistance*.8,Math.sin(angle*.7)*1.4,Math.cos(angle)*this.camDistance).add(this.focus);
    this.camera.position.lerp(desired,1-Math.exp(-dt*1.5));this.camera.lookAt(this.focus);
    this.camFov=smooth(this.camFov,[55,69,43,79,36][this.camPhase],1.1);this.camera.fov=this.camFov;this.camera.updateProjectionMatrix();
    this.camera.rotateZ(Math.sin(t*.35)*.035);
@@ -154,13 +172,13 @@ export class VisualEngine{
   const radius=12+activity*70+8*Math.sin(t*.7);
   const colors=['#365e79','#bb7a6b','#c7a35b','#527c71'];
   ctx.save();ctx.translate(x,y);ctx.rotate(angle);
-  ctx.globalAlpha=.14+Math.min(.55,activity*.75);
+  ctx.globalAlpha=.035+Math.min(.10,activity*.16);
   ctx.strokeStyle=colors[Math.floor(t/2)%colors.length];
   ctx.lineWidth=1.4+activity*12;
   ctx.beginPath();ctx.moveTo(-radius*2,-radius*.2);
   ctx.bezierCurveTo(-radius,radius*1.5,radius,-radius*1.4,radius*2,radius*.2);
   ctx.stroke();
-  ctx.globalAlpha=.055+activity*.08;ctx.fillStyle=colors[(Math.floor(t/2)+1)%colors.length];
+  ctx.globalAlpha=.018+activity*.025;ctx.fillStyle=colors[(Math.floor(t/2)+1)%colors.length];
   ctx.beginPath();ctx.ellipse(0,0,radius*1.6,radius*.65,0,0,Math.PI*2);ctx.fill();
   ctx.restore();this.paintTexture.needsUpdate=true;
  }
