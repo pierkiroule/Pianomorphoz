@@ -14,7 +14,7 @@ export class VisualEngine{
  private cameraX=0;private cameraY=0;private cameraZoom=1;private cameraAngle=0;private cameraFov=53;
  private targetX=0;private targetY=0;private targetZoom=1;private targetAngle=0;private shotAngle=0;private shotElevation=0;private shotZoom=1;
  private pointer:{x:number;y:number}|null=null;private paletteIndex=0;private paletteKey='';
- private lastPaint=false;private destroyed=false;private logical=1800;private paperSize=1800;
+ private lastPaint=false;private destroyed=false;private paintClock=0;private logical=1800;private paperSize=1800;
  constructor(canvas:HTMLCanvasElement,settings:Settings){
   this.canvas=canvas;this.settings=settings;this.ctx=canvas.getContext('2d',{alpha:false})!;
   this.paper=document.createElement('canvas');this.ink=document.createElement('canvas');
@@ -80,7 +80,7 @@ export class VisualEngine{
   const speed=(20+signal*165)*(this.settings.intensity/100+.4);
   this.x+=Math.cos(this.heading)*speed*dt;this.y+=Math.sin(this.heading)*speed*dt;
   const margin=120;if(this.x<margin||this.x>this.logical-margin||this.y<margin||this.y>this.logical-margin){this.heading+=Math.PI*.8;this.x=Math.max(margin,Math.min(this.logical-margin,this.x));this.y=Math.max(margin,Math.min(this.logical-margin,this.y));}
-  const density=Math.max(1,Math.min(5,Math.round(1+this.settings.density/32)));
+  const density=Math.max(1,Math.min(3,Math.round(1+this.settings.density/50)));
   const color=this.color();
   for(let i=0;i<density;i++){
    const a=t*([1,2.7,5,1.4,8,3][this.gesture])+i*TAU/density;
@@ -116,7 +116,7 @@ export class VisualEngine{
   const z=Math.min(w,h)/this.logical*this.cameraZoom;
   ctx.scale(z,z);ctx.translate(-this.cameraX,-this.cameraY);
   ctx.drawImage(this.paper,0,0);ctx.drawImage(this.ink,0,0);
-  if(this.background&&this.background instanceof HTMLImageElement&&this.background.complete){ctx.globalAlpha=this.settings.bgOpacity/100;ctx.drawImage(this.background,0,0,this.logical,this.logical);}
+  if(this.background&&((this.background instanceof HTMLImageElement&&this.background.complete)||(this.background instanceof HTMLVideoElement&&this.background.readyState>=2))){ctx.globalAlpha=this.settings.bgOpacity/100;ctx.drawImage(this.background,0,0,this.logical,this.logical);}
   ctx.restore();
  }
  private loop=(now:number)=>{
@@ -125,7 +125,7 @@ export class VisualEngine{
   if(this.mode==='play'&&this.running){
    this.time+=dt;const signal=Math.max(this.audio*2,this.bands.low*.9+this.bands.mid*.8+this.bands.high*.5,this.midi);
    const active=signal>.045;
-   if(active)this.paint(dt,signal);else if(this.lastPaint)this.gestureTime=0;
+   if(active){this.paintClock+=dt;if(this.paintClock>=1/30){this.paint(Math.min(.06,this.paintClock),signal);this.paintClock=0;}}else if(this.lastPaint){this.gestureTime=0;this.paintClock=0;}
    this.lastPaint=active;this.midi*=Math.exp(-dt*5);this.noteEnergy*=Math.exp(-dt*7);
   }
   this.camera(dt,true);this.render(this.ctx,this.canvas.width,this.canvas.height);
@@ -153,7 +153,7 @@ export class VisualEngine{
  reset=()=>{
   this.ictx.clearRect(0,0,this.logical,this.logical);this.marks=[];this.x=this.logical/2;this.y=this.logical/2;this.heading=-Math.PI/2;
   this.time=0;this.activeTime=0;this.gesture=0;this.gestureTime=0;this.noteEnergy=0;this.lastPaint=false;
-  this.cameraX=this.x;this.cameraY=this.y;this.cameraZoom=1;this.cameraAngle=0;this.mode='play';this.running=true;
+  this.paintClock=0;this.cameraX=this.x;this.cameraY=this.y;this.cameraZoom=1;this.cameraAngle=0;this.mode='play';this.running=true;
  };
  destroy=()=>{this.destroyed=true;cancelAnimationFrame(this.raf);this.canvas.removeEventListener('pointerdown',this.down);this.canvas.removeEventListener('pointermove',this.move);this.canvas.removeEventListener('pointerup',this.up);this.canvas.removeEventListener('pointercancel',this.up);this.canvas.removeEventListener('wheel',this.wheel);};
 }
