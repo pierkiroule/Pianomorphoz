@@ -24,6 +24,7 @@ export class VisualEngine {
   private bgSource: HTMLImageElement|HTMLVideoElement|null=null; private bgTexture:THREE.Texture|null=null;
   private bgMesh:THREE.Mesh|null=null; private destroyed=false;
   private splashTexture:THREE.CanvasTexture; private colorCursor=0; private paletteSignature='';
+  private gesture=0; private gestureAge=0; private lastActive=false; private lastAccent=0; private cameraScene=0; private cameraAge=0; private cameraDistance=8; private cameraFov=53; private cameraRoll=0; private activeTime=0;
   constructor(canvas:HTMLCanvasElement,settings:Settings){
     this.canvas=canvas;this.settings=settings;
     this.renderer=new THREE.WebGLRenderer({canvas,alpha:false,antialias:true,preserveDrawingBuffer:true,powerPreference:'high-performance'});
@@ -47,6 +48,7 @@ export class VisualEngine {
     this.renderer.setSize(w,h,false);this.camera.aspect=w/h;this.camera.updateProjectionMatrix();};
   private color(){const colors=this.settings.colors.filter(c=>/^#[0-9a-fA-F]{6}$/.test(c));if(!colors.length)return new THREE.Color('#365e59');const signature=colors.join(',');if(signature!==this.paletteSignature){this.paletteSignature=signature;this.colorCursor=0;}const index=this.colorCursor++%colors.length;return new THREE.Color(colors[index]);}
   private createStroke(){
+    if(this.strokes.length>=160){const old=this.strokes.shift()!;this.scene.remove(old.mesh);old.mesh.geometry.dispose();(old.mesh.material as THREE.Material).dispose();}
     const material=new THREE.ShaderMaterial({vertexShader:VS,fragmentShader:FS,
       uniforms:{ink:{value:this.color()},opacity:{value:.78}},side:THREE.DoubleSide,transparent:true,depthWrite:false});
     const mesh=new THREE.Mesh(new THREE.BufferGeometry(),material);mesh.frustumCulled=false;
@@ -81,6 +83,12 @@ export class VisualEngine {
       this.drops.push({mesh:sprite,velocity:new THREE.Vector3(this.range(-1,1),this.range(-1,1),this.range(-1,1)).multiplyScalar(.3+power*2),age:0,life:this.range(5,18)});
     }
   }
+  private changeGesture(force=false){
+    if(!force&&this.gestureAge<.38)return;
+    this.gesture=(this.gesture+1+Math.floor(this.rand()*4))%6;this.gestureAge=0;
+    this.current=null;
+    if(this.rand()>.35){this.cameraScene=(this.cameraScene+1+Math.floor(this.rand()*3))%5;this.cameraAge=0;}
+  }
   note=(pitch:number,velocity:number)=>{
     if(this.mode!=='play')return;
     const v=Math.max(0,Math.min(1,velocity/127));this.midi=Math.max(this.midi,v);
@@ -88,38 +96,64 @@ export class VisualEngine {
     this.heading.x+=((pitch-60)/60)*v*.25;
     this.heading.y+=Math.sin(pitch*.38)*v*.2;
     this.heading.normalize();
-    if(v>.67)this.splatter(v);
-    if(this.current&&this.current.points.length>8&&v>.55)this.createStroke();
+    if(v>.5){this.changeGesture(true);if(v>.7)this.splatter(v);}
+    if(this.current&&this.current.points.length>8&&v>.3)this.current=null;
   };
   private paint(dt:number){
-    const t=this.time,freedom=this.settings.freedom/100;
-    const curl=new THREE.Vector3(Math.sin(t*(.73+this.bands.high*.5)+this.tip.y*.19),Math.cos(t*(.47+this.bands.mid*.4)+this.tip.z*.17),-.9+this.bands.low*.2);
-    this.heading.lerp(curl.normalize(),Math.min(1,dt*(.35+freedom*.9)));
-    this.heading.normalize();
-    const speed=(.5+this.energy*2.2)*(1+this.settings.intensity/180);
+    const t=this.activeTime,freedom=this.settings.freedom/100;
+    const bass=this.bands.low,mid=this.bands.mid,treble=this.bands.high;
+    const twist=t*(.7+treble*3)+this.gesture*1.9;
+    const swirl=new THREE.Vector3(Math.sin(twist+this.tip.y*.2),Math.cos(twist*.77+this.tip.z*.2),Math.sin(twist*.4));
+    const directions=[
+      new THREE.Vector3(swirl.x,swirl.y,-.6),
+      new THREE.Vector3(Math.cos(t*3),Math.sin(t*3),-.3),
+      new THREE.Vector3(Math.sin(t*7)*.3,Math.cos(t*4)*.5,-1),
+      new THREE.Vector3(Math.sin(t*2)*1.2,Math.cos(t*5)*.2,-.5),
+      new THREE.Vector3(Math.sin(t*9)*.8,Math.cos(t*9)*.8,-.15),
+      new THREE.Vector3(Math.cos(t*.9),Math.sin(t*.9),Math.cos(t*1.3))
+    ];
+    this.heading.lerp(directions[this.gesture].normalize(),Math.min(1,dt*(1.3+freedom*4+treble*3))).normalize();
+    const speed=(.25+this.energy*3.5)*(1+this.settings.intensity/160);
     this.tip.addScaledVector(this.heading,speed*dt);
-    this.distance+=speed*dt;
-    this.step+=speed*dt;
-    if(this.step>.065){
+    this.distance+=speed*dt;this.step+=speed*dt;
+    const spacing=.045+this.gesture*.008;
+    if(this.step>spacing){
       this.step=0;
-      if(!this.current||this.current.points.length>=90)this.createStroke();
-      const s=this.current!;
-      s.points.push(this.tip.clone());
-      const w=(.012+this.energy*.13+this.pulse*.09+this.bands.low*.14)*(.65+.35*Math.sin(t*3));
-      s.widths.push(w);
-      this.updateStroke(s);
-      this.bounds.expandByPoint(this.tip);
+      if(!this.current||this.current.points.length>=65)this.createStroke();
+      const stroke=this.current!;
+      stroke.points.push(this.tip.clone());
+      const shape=[.8,1.4,.32,2.1,.18,1.1][this.gesture];
+      const flutter=this.gesture===1?Math.abs(Math.sin(t*8)):this.gesture===3?Math.pow(Math.abs(Math.sin(t*4)),3):.7+.3*Math.sin(t*11);
+      const width=(.012+bass*.24+mid*.09+this.pulse*.07)*shape*(.25+.75*flutter);
+      stroke.widths.push(Math.max(.003,width));this.updateStroke(stroke);this.bounds.expandByPoint(this.tip);
     }
-    if((this.energy>.5||this.bands.transient>.08)&&this.rand()<dt*(this.energy*2+this.bands.transient*18))this.splatter(this.energy+this.bands.transient);
+    if(this.bands.transient>.055||this.pulse>.65){
+      if(this.rand()<Math.min(.9,dt*(4+treble*15+this.pulse*6)))this.splatter(this.energy+treble);
+    }
   }
   private updateCamera(dt:number){
     if(this.mode==='play'){
-      const behind=this.heading.clone().multiplyScalar(-7);
-      const desired=this.tip.clone().add(behind).add(new THREE.Vector3(0,2.4,0));
-      this.camera.position.lerp(desired,1-Math.exp(-dt*1.25));
-      const look=this.tip.clone().addScaledVector(this.heading,5);
-      this.target.lerp(look,1-Math.exp(-dt*2));
+      this.cameraAge+=dt;
+      const event=this.pulse+this.bands.transient*3;
+      if((this.cameraAge>3.5&&event>.12)||this.cameraAge>10){this.cameraScene=(this.cameraScene+1)%5;this.cameraAge=0;}
+      const t=this.time,energy=this.energy;
+      const distances=[8,4.3,12,6,3.5];
+      const targetDistance=distances[this.cameraScene]*(1-.24*Math.min(1,energy))*(1+.18*Math.sin(t*.65));
+      this.cameraDistance=THREE.MathUtils.damp(this.cameraDistance,targetDistance,1.8,dt);
+      const angle=t*[.12,.6,-.25,.3,-.75][this.cameraScene];
+      const altitude=[2.4,4,-3,1,0][this.cameraScene]+Math.sin(t*.7)*1.2;
+      const behind=this.heading.clone().multiplyScalar(-this.cameraDistance);
+      const orbit=new THREE.Vector3(Math.sin(angle)*this.cameraDistance*.7,altitude,Math.cos(angle)*this.cameraDistance*.45);
+      const desired=this.tip.clone().add(behind.multiplyScalar(this.cameraScene===0?1:.4)).add(orbit);
+      this.camera.position.lerp(desired,1-Math.exp(-dt*1.6));
+      const look=this.tip.clone().addScaledVector(this.heading,this.cameraScene===0?3:0);
+      this.target.lerp(look,1-Math.exp(-dt*2.5));
       this.camera.lookAt(this.target);
+      const fovTarget=[55,72,42,88,34][this.cameraScene]+Math.min(12,energy*7);
+      this.cameraFov=THREE.MathUtils.damp(this.cameraFov,fovTarget,1.3,dt);
+      this.camera.fov=this.cameraFov;this.camera.updateProjectionMatrix();
+      this.cameraRoll=THREE.MathUtils.damp(this.cameraRoll,Math.sin(t*.7)*[.02,.08,.03,.12,.06][this.cameraScene],1.5,dt);
+      this.camera.rotateZ(this.cameraRoll);
     }else{
       const r=this.radius*2.7*this.orbitZoom;
       const pos=new THREE.Vector3(Math.sin(this.orbitTheta)*Math.cos(this.orbitPhi)*r,
@@ -187,18 +221,19 @@ export class VisualEngine {
     for(const d of this.drops){this.scene.remove(d.mesh);(d.mesh.material as THREE.Material).dispose();}
     this.strokes=[];this.drops=[];this.current=null;this.mode='play';this.running=true;
     this.tip.set(0,0,0);this.heading.set(0,0,-1);this.camera.position.set(0,2,8);
-    this.time=0;this.distance=0;this.step=0;this.bounds.makeEmpty();this.energy=0;this.pulse=0;
-    this.createStroke();
+    this.time=0;this.activeTime=0;this.distance=0;this.step=0;this.bounds.makeEmpty();this.energy=0;this.pulse=0;
+    this.gesture=0;this.gestureAge=0;this.lastActive=false;this.cameraScene=0;this.cameraAge=0;this.cameraDistance=8;this.cameraFov=53;this.camera.fov=53;this.camera.updateProjectionMatrix();
   };
   private loop=(now:number)=>{
     if(this.destroyed)return;this.raf=requestAnimationFrame(this.loop);
     const dt=Math.min(.05,(now-(this.last||now))/1000);this.last=now;
     this.syncBackground();
     if(this.mode==='play'&&this.running){
-      this.time+=dt;const target=Math.max(this.audio*3,this.bands.low*.9+this.bands.mid*.8+this.bands.high*.5,this.midi,this.sustain?.18:0);
-      this.energy=THREE.MathUtils.damp(this.energy,target,target>this.energy?20:1.1,dt);
-      this.midi*=Math.exp(-dt*3);this.pulse*=Math.exp(-dt*14);
-      this.paint(dt);
+      this.time+=dt;const signal=Math.max(this.audio*2,this.bands.low*.85+this.bands.mid*.9+this.bands.high*.55,this.midi);
+      const active=signal>.045||this.midi>.04;
+      this.energy=THREE.MathUtils.damp(this.energy,active?signal:0,active?18:6,dt);
+      if(active){this.activeTime+=dt;this.gestureAge+=dt;if(!this.lastActive){this.current=null;this.changeGesture(true);}if(this.gestureAge>2.4+this.gesture*.35&&this.bands.transient>.025)this.changeGesture();this.paint(dt);}else if(this.lastActive){this.current=null;this.step=0;}
+      this.lastActive=active;this.midi*=Math.exp(-dt*5);this.pulse*=Math.exp(-dt*10);
     }
     for(const d of this.drops){
       if(this.mode==='play'&&this.running){d.age+=dt;d.mesh.position.addScaledVector(d.velocity,dt);d.velocity.multiplyScalar(Math.exp(-dt*.7));}
