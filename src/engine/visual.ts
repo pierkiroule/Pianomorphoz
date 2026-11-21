@@ -41,13 +41,16 @@ export class VisualEngine{
  private cursor=new THREE.Vector3();private heading=new THREE.Vector3(.3,.1,-1).normalize();private focus=new THREE.Vector3();
  private camPhase=0;private camClock=0;private camDistance=9;private camFov=52;private shotAngle=0;private shotElevation=0;private shotZoom=1;private printFov=53;
  private pointer:{x:number;y:number}|null=null;private energy=0;private accent=0;private count=0;private lastSignal=0;private idleForm:Form|null=null;
+ private paintCanvas=document.createElement('canvas');private paintCtx:CanvasRenderingContext2D|null=null;private paintTexture:THREE.CanvasTexture|null=null;private paintClock=0;private paintStep=0;
  private backgroundTexture:THREE.Texture|null=null;private backgroundMesh:THREE.Mesh|null=null;private bgRef:HTMLImageElement|HTMLVideoElement|null=null;
  constructor(canvas:HTMLCanvasElement,settings:Settings){
   this.canvas=canvas;this.settings=settings;
   this.renderer=new THREE.WebGLRenderer({canvas,alpha:false,antialias:true,preserveDrawingBuffer:true,powerPreference:'high-performance'});
   this.renderer.outputColorSpace=THREE.SRGBColorSpace;
   this.renderer.debug.checkShaderErrors=true;
-  this.scene.background=new THREE.Color('#ffffff');this.scene.fog=new THREE.Fog('#ffffff',30,90);
+  this.paintCanvas.width=1024;this.paintCanvas.height=1024;this.paintCtx=this.paintCanvas.getContext('2d');
+  if(this.paintCtx){this.paintCtx.fillStyle='#ffffff';this.paintCtx.fillRect(0,0,1024,1024);this.paintTexture=new THREE.CanvasTexture(this.paintCanvas);this.paintTexture.colorSpace=THREE.SRGBColorSpace;this.scene.background=this.paintTexture;}else{this.scene.background=new THREE.Color('#ffffff');}
+  this.scene.fog=new THREE.Fog('#ffffff',30,90);
   this.camera.position.set(0,2,10);
   canvas.addEventListener('pointerdown',this.down);canvas.addEventListener('pointermove',this.move);
   canvas.addEventListener('pointerup',this.up);canvas.addEventListener('pointercancel',this.up);
@@ -140,6 +143,27 @@ export class VisualEngine{
   this.backgroundMesh=new THREE.Mesh(new THREE.PlaneGeometry(140,90),new THREE.MeshBasicMaterial({map:tex,transparent:true,opacity:this.settings.bgOpacity/100,depthTest:false,depthWrite:false}));
   this.backgroundMesh.position.z=-85;this.camera.add(this.backgroundMesh);
  }
+ private paint(dt:number){
+  const ctx=this.paintCtx;if(!ctx||!this.paintTexture)return;
+  this.paintClock+=dt;const activity=Math.max(this.audio,this.bands.level,this.midi);
+  if(this.paintClock<.025)return;this.paintClock=0;
+  const t=this.paintStep++*.016;
+  const x=512+Math.sin(t*.71)*255+Math.sin(t*1.93)*65;
+  const y=512+Math.cos(t*.57)*245+Math.cos(t*1.37)*75;
+  const angle=t*.8+Math.sin(t*.43);
+  const radius=12+activity*70+8*Math.sin(t*.7);
+  const colors=['#365e79','#bb7a6b','#c7a35b','#527c71'];
+  ctx.save();ctx.translate(x,y);ctx.rotate(angle);
+  ctx.globalAlpha=.14+Math.min(.55,activity*.75);
+  ctx.strokeStyle=colors[Math.floor(t/2)%colors.length];
+  ctx.lineWidth=1.4+activity*12;
+  ctx.beginPath();ctx.moveTo(-radius*2,-radius*.2);
+  ctx.bezierCurveTo(-radius,radius*1.5,radius,-radius*1.4,radius*2,radius*.2);
+  ctx.stroke();
+  ctx.globalAlpha=.055+activity*.08;ctx.fillStyle=colors[(Math.floor(t/2)+1)%colors.length];
+  ctx.beginPath();ctx.ellipse(0,0,radius*1.6,radius*.65,0,0,Math.PI*2);ctx.fill();
+  ctx.restore();this.paintTexture.needsUpdate=true;
+ }
  private loop=(now:number)=>{
   if(this.destroyed)return;this.raf=requestAnimationFrame(this.loop);
   const dt=Math.min(.05,(now-(this.last||now))/1000);this.last=now;
@@ -149,7 +173,7 @@ export class VisualEngine{
    this.activeClock+=dt;
    if(signal>.035&&this.activeClock>.55+(.7-this.settings.density/180)){this.spawn(60+Math.round(this.bands.mid*24),clamp(signal,0,1));this.activeClock=0;}
    this.midi*=Math.exp(-dt*5);this.accent*=Math.exp(-dt*6);
-   this.animateForms(dt);
+   this.animateForms(dt);this.paint(dt);
   }
   this.syncBackground();this.updateCamera(dt);
   if(this.backgroundMesh)(this.backgroundMesh.material as THREE.MeshBasicMaterial).opacity=this.settings.bgOpacity/100;
@@ -181,6 +205,6 @@ export class VisualEngine{
   }
  };
  exportSheet=(width=3000)=>{const ratios:Record<PaperFormat,number>={square:1,a4p:210/297,a4l:297/210,a3p:297/420,wide:16/9};return this.exportPrint(width,ratios[this.paperConfig.format]);};
- reset=()=>{for(const f of this.forms)this.dispose(f);this.forms=[];this.idleForm=null;this.time=0;this.activeClock=0;this.count=0;this.mode='play';this.running=true;this.camera.position.set(0,2,10);this.focus.set(0,0,0);this.camPhase=0;this.camClock=0;this.spawn(60,.45,true);};
- destroy=()=>{this.destroyed=true;cancelAnimationFrame(this.raf);this.canvas.removeEventListener('pointerdown',this.down);this.canvas.removeEventListener('pointermove',this.move);this.canvas.removeEventListener('pointerup',this.up);this.canvas.removeEventListener('pointercancel',this.up);this.canvas.removeEventListener('wheel',this.wheel);for(const f of this.forms)this.dispose(f);if(this.backgroundMesh){this.backgroundMesh.geometry.dispose();(this.backgroundMesh.material as THREE.Material).dispose();}this.backgroundTexture?.dispose();this.renderer.dispose();};
+ reset=()=>{if(this.paintCtx){this.paintCtx.fillStyle='#ffffff';this.paintCtx.fillRect(0,0,1024,1024);if(this.paintTexture)this.paintTexture.needsUpdate=true;}this.paintStep=0;for(const f of this.forms)this.dispose(f);this.forms=[];this.idleForm=null;this.time=0;this.activeClock=0;this.count=0;this.mode='play';this.running=true;this.camera.position.set(0,2,10);this.focus.set(0,0,0);this.camPhase=0;this.camClock=0;this.spawn(60,.45,true);};
+ destroy=()=>{this.destroyed=true;cancelAnimationFrame(this.raf);this.canvas.removeEventListener('pointerdown',this.down);this.canvas.removeEventListener('pointermove',this.move);this.canvas.removeEventListener('pointerup',this.up);this.canvas.removeEventListener('pointercancel',this.up);this.canvas.removeEventListener('wheel',this.wheel);for(const f of this.forms)this.dispose(f);if(this.backgroundMesh){this.backgroundMesh.geometry.dispose();(this.backgroundMesh.material as THREE.Material).dispose();}this.backgroundTexture?.dispose();this.paintTexture?.dispose();this.renderer.dispose();};
 }
