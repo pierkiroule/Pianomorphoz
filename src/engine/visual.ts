@@ -37,14 +37,14 @@ export class VisualEngine{
  paperConfig:PaperConfig={format:'a4l',texture:'cotton',absorption:65};
  brushes:BrushConfig[]=[{kind:'wash',color:'#365e79',water:75},{kind:'filament',color:'#bb7a6b',water:35},{kind:'bloom',color:'#c7a35b',water:85}];
  private renderer:THREE.WebGLRenderer;private scene=new THREE.Scene();private camera=new THREE.PerspectiveCamera(52,1,.04,180);
- private forms:Form[]=[];private seed=14217;private raf=0;private last=0;private time=0;private activeClock=0;private destroyed=false;
+ private forms:Form[]=[];private seed=(Math.floor(Math.random()*0xffffffff)>>>0)||14217;private compositionSeed=this.seed;private motif=0;private paletteShift=0;private spread=1;private twist=1;private softness=1;private raf=0;private last=0;private time=0;private activeClock=0;private destroyed=false;
  private cursor=new THREE.Vector3();private heading=new THREE.Vector3(.3,.1,-1).normalize();private focus=new THREE.Vector3();
  private camPhase=0;private camClock=0;private camDistance=9;private camFov=52;private shotAngle=0;private shotElevation=0;private shotZoom=1;private printFov=53;
  private pointer:{x:number;y:number}|null=null;private energy=0;private accent=0;private count=0;private lastSignal=0;private idleForm:Form|null=null;
  private paintCanvas=document.createElement('canvas');private paintCtx:CanvasRenderingContext2D|null=null;private paintTexture:THREE.CanvasTexture|null=null;private paintClock=0;private paintStep=0;
  private backgroundTexture:THREE.Texture|null=null;private backgroundMesh:THREE.Mesh|null=null;private bgRef:HTMLImageElement|HTMLVideoElement|null=null;
  constructor(canvas:HTMLCanvasElement,settings:Settings){
-  this.canvas=canvas;this.settings=settings;
+  this.canvas=canvas;this.settings=settings;this.newComposition();
   this.renderer=new THREE.WebGLRenderer({canvas,alpha:false,antialias:true,preserveDrawingBuffer:true,powerPreference:'high-performance'});
   this.renderer.outputColorSpace=THREE.SRGBColorSpace;
   this.renderer.debug.checkShaderErrors=true;
@@ -57,6 +57,7 @@ export class VisualEngine{
   canvas.addEventListener('wheel',this.wheel,{passive:false});
   this.resize();this.spawn(60,.45,true);this.raf=requestAnimationFrame(this.loop);
  }
+ private newComposition(){this.compositionSeed=this.seed;this.motif=Math.floor(this.rand()*5);this.paletteShift=this.rand()*1.3;this.spread=.65+this.rand()*.75;this.twist=.55+this.rand()*1.7;this.softness=.65+this.rand()*.7;}
  private rand(){this.seed=(Math.imul(this.seed,1664525)+1013904223)>>>0;return this.seed/4294967296;}
  private range(a:number,b:number){return a+(b-a)*this.rand();}
  resize=()=>{const w=Math.max(1,innerWidth),h=Math.max(1,innerHeight);this.renderer.setPixelRatio(Math.min(devicePixelRatio||1,w<750?1.35:1.75));this.renderer.setSize(w,h,false);this.camera.aspect=w/h;this.camera.updateProjectionMatrix();};
@@ -65,14 +66,16 @@ export class VisualEngine{
  private makeGeometry(kind:BrushKind,seed:number){
   const segments=64,rows=8,verts:number[]=[],uvs:number[]=[],indices:number[]=[];
   const width:Record<BrushKind,number>={wash:1.7,calligraphy:.75,filament:.22,bloom:1.4,splatter:.48,petal:1.2};
-  const length=kind==='filament'?6:kind==='bloom'?3.5:4.6;
+  const length=(kind==='filament'?6:kind==='bloom'?3.5:4.6)*(.75+this.spread*.22);
   for(let i=0;i<=segments;i++){const t=i/segments,theta=t*TAU*(kind==='bloom'?1.3:.65);
-   const radial=(.2+.8*Math.sin(Math.PI*t))*(.7+.3*Math.sin(t*12+seed));
+   const envelope=this.motif===0?Math.sin(Math.PI*t):this.motif===1?Math.pow(Math.sin(Math.PI*t),.55):this.motif===2?Math.sin(Math.PI*t)*(.7+.3*Math.cos(t*TAU*3)):this.motif===3?Math.pow(Math.sin(Math.PI*t),1.7):Math.sin(Math.PI*t)*(.75+.25*Math.sin(t*17+seed));
+   const radial=(.16+.84*Math.max(0,envelope))*(.68+.32*Math.sin(t*(8+this.twist*5)+seed));
    for(let j=0;j<=rows;j++){const v=j/rows-.5;
     const ribbon=width[kind]*v*radial;
-    const x=Math.sin(theta)*(.9+t*1.3)+Math.cos(theta)*ribbon;
-    const y=(t-.5)*length+Math.sin(t*12+seed)*.24+ribbon*.2;
-    const z=Math.cos(theta)*(.9+t*1.3)+Math.sin(theta)*ribbon+Math.sin(v*TAU+t*13)*.11;
+    const phi=theta*this.twist+Math.sin(t*TAU*(this.motif+1))*.15;
+    const x=Math.sin(phi)*(.9+t*1.3)*this.spread+Math.cos(phi)*ribbon;
+    const y=(t-.5)*length+Math.sin(t*(8+this.motif*3)+seed)*.24*this.softness+ribbon*.2;
+    const z=Math.cos(phi)*(.9+t*1.3)*this.spread+Math.sin(phi)*ribbon+Math.sin(v*TAU+t*(9+this.motif*2))*.11*this.softness;
     verts.push(x,y,z);uvs.push(t,j/rows);
     if(i<segments&&j<rows){const a=i*(rows+1)+j,b=a+rows+1;indices.push(a,b,a+1,b,b+1,a+1);}
    }
@@ -83,8 +86,10 @@ export class VisualEngine{
   if(this.forms.length>=18){const index=this.forms.findIndex(f=>f!==this.idleForm);if(index>=0){const old=this.forms.splice(index,1)[0];this.dispose(old);}}
   const brush=this.brushes[this.count%Math.max(1,this.brushes.length)]||this.brushes[0];this.count++;
   const seed=this.rand()*100;const colors=this.settings.colors.filter(c=>/^#[0-9a-f]{6}$/i.test(c));
-  const color=brush.color||colors[this.count%Math.max(1,colors.length)]||'#517b79';
-  const material=new THREE.ShaderMaterial({vertexShader:vertex,fragmentShader:fragment,side:THREE.DoubleSide,transparent:true,depthWrite:false,uniforms:{uColor:{value:new THREE.Color(color)},uOpacity:{value:0},uTime:{value:0},uSeed:{value:seed},uEnergy:{value:0}}});
+  const baseColor=brush.color||colors[this.count%Math.max(1,colors.length)]||'#517b79';
+  const pigment=new THREE.Color(baseColor);pigment.offsetHSL((this.paletteShift-.65)*.085+(this.rand()-.5)*.055,(this.rand()-.5)*.12,(this.rand()-.5)*.18);
+  const color=pigment;
+  const material=new THREE.ShaderMaterial({vertexShader:vertex,fragmentShader:fragment,side:THREE.DoubleSide,transparent:true,depthWrite:false,uniforms:{uColor:{value:color},uOpacity:{value:0},uTime:{value:0},uSeed:{value:seed},uEnergy:{value:0}}});
   const geometry=this.makeGeometry(brush.kind,seed);
   const mesh=new THREE.Mesh(geometry,material);
   // Hand-drawn hairline ink contours follow the exact watercolor ribbon edges.
@@ -105,9 +110,11 @@ export class VisualEngine{
    spine.push(new THREE.Vector3(pos.getX(k),pos.getY(k),pos.getZ(k)+.012));
   }
   mesh.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(spine),new THREE.LineBasicMaterial({color:'#2d4245',transparent:true,opacity:.24,depthWrite:false})));mesh.frustumCulled=false;
-  const angle=this.count*2.39996323+pitch*.025,rad=Math.sqrt((this.count%11)/11)*2.2;
-  const center=persistent?new THREE.Vector3(0,0,0):new THREE.Vector3(Math.cos(angle)*rad,Math.sin(angle*1.3)*1.65,Math.sin(angle)*rad);
-  mesh.position.copy(center);mesh.rotation.set(persistent?0:this.rand()*TAU,persistent?0:this.rand()*TAU,persistent?0:this.rand()*TAU);
+  // Phyllotaxis with a bounded, breathing envelope prevents random clumps.
+  const angle=this.count*2.39996323+pitch*.025+this.compositionSeed*.00001;
+  const rad=Math.sqrt((this.count%13)/13)*1.35*this.spread;
+  const center=persistent?new THREE.Vector3(0,0,0):new THREE.Vector3(Math.cos(angle)*rad,Math.sin(angle*1.3)*.9,Math.sin(angle)*rad*.65);
+  mesh.position.copy(center);mesh.rotation.set(persistent?0:(this.rand()-.5)*1.3,persistent?0:angle*.35,persistent?0:(this.rand()-.5)*1.1);
   mesh.scale.setScalar(.3+velocity*.3);this.scene.add(mesh);
   const form={mesh,material,born:this.time,life:persistent?Infinity:this.range(14,27),seed,center,radius:2.5,kind:brush.kind};this.forms.push(form);if(persistent)this.idleForm=form;
  }
@@ -116,7 +123,7 @@ export class VisualEngine{
  private animateForms(dt:number){
   for(let i=this.forms.length-1;i>=0;i--){const f=this.forms[i];const age=this.time-f.born;if(age>=f.life){this.dispose(f);this.forms.splice(i,1);continue;}
    const persistent=f===this.idleForm;const rise=persistent?1:clamp(age/2.3,0,1),fall=persistent?1:clamp((f.life-age)/4.5,0,1),life=Math.min(rise,fall);
-   const breathe=1+.08*Math.sin(this.time*.8+f.seed);
+   const breathe=1+.045*Math.sin(this.time*.8+f.seed);
    f.mesh.scale.setScalar((persistent?1.25+this.energy*.95:.6+.7*rise)*breathe);
    f.mesh.rotation.y+=dt*(.055+this.energy*.15);f.mesh.rotation.x+=dt*.025;
    f.mesh.position.y=f.center.y+Math.sin(this.time*.35+f.seed)*.18;
@@ -223,6 +230,6 @@ export class VisualEngine{
   }
  };
  exportSheet=(width=3000)=>{const ratios:Record<PaperFormat,number>={square:1,a4p:210/297,a4l:297/210,a3p:297/420,wide:16/9};return this.exportPrint(width,ratios[this.paperConfig.format]);};
- reset=()=>{if(this.paintCtx){this.paintCtx.fillStyle='#ffffff';this.paintCtx.fillRect(0,0,1024,1024);if(this.paintTexture)this.paintTexture.needsUpdate=true;}this.paintStep=0;for(const f of this.forms)this.dispose(f);this.forms=[];this.idleForm=null;this.time=0;this.activeClock=0;this.count=0;this.mode='play';this.running=true;this.camera.position.set(0,2,10);this.focus.set(0,0,0);this.camPhase=0;this.camClock=0;this.spawn(60,.45,true);};
+ reset=()=>{this.seed=(Math.floor(Math.random()*0xffffffff)>>>0)||14217;this.newComposition();if(this.paintCtx){this.paintCtx.fillStyle='#ffffff';this.paintCtx.fillRect(0,0,1024,1024);if(this.paintTexture)this.paintTexture.needsUpdate=true;}this.paintStep=0;for(const f of this.forms)this.dispose(f);this.forms=[];this.idleForm=null;this.time=0;this.activeClock=0;this.count=0;this.mode='play';this.running=true;this.camera.position.set(0,2,10);this.focus.set(0,0,0);this.camPhase=0;this.camClock=0;this.spawn(60,.45,true);};
  destroy=()=>{this.destroyed=true;cancelAnimationFrame(this.raf);this.canvas.removeEventListener('pointerdown',this.down);this.canvas.removeEventListener('pointermove',this.move);this.canvas.removeEventListener('pointerup',this.up);this.canvas.removeEventListener('pointercancel',this.up);this.canvas.removeEventListener('wheel',this.wheel);for(const f of this.forms)this.dispose(f);if(this.backgroundMesh){this.backgroundMesh.geometry.dispose();(this.backgroundMesh.material as THREE.Material).dispose();}this.backgroundTexture?.dispose();this.paintTexture?.dispose();this.renderer.dispose();};
 }
