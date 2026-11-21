@@ -19,7 +19,7 @@ export class VisualEngine {
   private time=0; private last=0; private distance=0; private energy=0; private pulse=0;
   private raf=0; private seed=947; private step=0; private current:Stroke|null=null;
   private bounds=new THREE.Box3(); private center=new THREE.Vector3(); private radius=10;
-  private orbitTheta=0; private orbitPhi=.25; private orbitZoom=1; private orbitPan=new THREE.Vector3();
+  private orbitTheta=0; private orbitPhi=.25; private orbitZoom=1; private printFov=53; private orbitPan=new THREE.Vector3();
   private pointer: {x:number;y:number}|null=null;
   private bgSource: HTMLImageElement|HTMLVideoElement|null=null; private bgTexture:THREE.Texture|null=null;
   private bgMesh:THREE.Mesh|null=null; private destroyed=false;
@@ -134,7 +134,7 @@ export class VisualEngine {
     this.bounds.getCenter(this.center);
     const size=this.bounds.getSize(new THREE.Vector3());
     this.radius=Math.max(2,size.length()*.5);
-    this.orbitTheta=.4;this.orbitPhi=.25;this.orbitZoom=1;this.orbitPan.set(0,0,0);
+    this.orbitTheta=.4;this.orbitPhi=.25;this.orbitZoom=1;this.printFov=53;this.camera.fov=53;this.camera.updateProjectionMatrix();this.orbitPan.set(0,0,0);
   };
   printMode=()=>{if(this.mode==='play')this.reveal();this.mode='print';};
   resume=()=>{this.mode='play';this.running=true;this.current=null;};
@@ -143,6 +143,10 @@ export class VisualEngine {
     this.orbitPhi=THREE.MathUtils.degToRad(Math.max(-85,Math.min(85,elevation)));
     this.orbitZoom=Math.max(.3,Math.min(3,zoom));
   };
+  setPrintFov=(fov:number)=>{this.printFov=THREE.MathUtils.clamp(fov,18,100);this.camera.fov=this.printFov;this.camera.updateProjectionMatrix();};
+  rotatePrint=(degrees:number)=>{this.orbitTheta+=THREE.MathUtils.degToRad(degrees);};
+  zoomPrint=(factor:number)=>{this.orbitZoom=THREE.MathUtils.clamp(this.orbitZoom*factor,.3,3);};
+  resetPrint=()=>{this.orbitTheta=.4;this.orbitPhi=.25;this.orbitZoom=1;this.printFov=53;this.camera.fov=53;this.camera.updateProjectionMatrix();this.orbitPan.set(0,0,0);};
   private down=(e:PointerEvent)=>{if(this.mode==='print'){this.pointer={x:e.clientX,y:e.clientY};this.canvas.setPointerCapture(e.pointerId);}};
   private move=(e:PointerEvent)=>{if(!this.pointer||this.mode!=='print')return;
     this.orbitTheta+=(e.clientX-this.pointer.x)*.008;
@@ -156,6 +160,12 @@ export class VisualEngine {
     const oldAspect=this.camera.aspect;const oldPixel=this.renderer.getPixelRatio();
     this.renderer.setPixelRatio(1);this.renderer.setSize(width,height,false);
     this.camera.aspect=width/height;this.camera.updateProjectionMatrix();
+    if(this.mode!=='play'){
+      const r=this.radius*2.7*this.orbitZoom;
+      const aim=this.center.clone().add(this.orbitPan);
+      this.camera.position.copy(aim).add(new THREE.Vector3(Math.sin(this.orbitTheta)*Math.cos(this.orbitPhi)*r,Math.sin(this.orbitPhi)*r,Math.cos(this.orbitTheta)*Math.cos(this.orbitPhi)*r));
+      this.camera.lookAt(aim);
+    }
     this.renderer.render(this.scene,this.camera);
     const url=this.canvas.toDataURL('image/png');
     this.renderer.setPixelRatio(oldPixel);this.renderer.setSize(oldSize.x,oldSize.y,false);

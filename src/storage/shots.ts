@@ -1,0 +1,7 @@
+export type Shot={id:string;name:string;created:number;blob:Blob;angle:number;elevation:number;zoom:number;fov:number;format:string};
+const DB='sonomorphoz-camprint',STORE='shots';
+function open():Promise<IDBDatabase>{return new Promise((resolve,reject)=>{const r=indexedDB.open(DB,1);r.onupgradeneeded=()=>{if(!r.result.objectStoreNames.contains(STORE))r.result.createObjectStore(STORE,{keyPath:'id'});};r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});}
+async function transaction<T>(mode:IDBTransactionMode,run:(s:IDBObjectStore,resolve:(v:T)=>void,reject:(e:unknown)=>void)=>void):Promise<T>{const db=await open();return new Promise<T>((resolve,reject)=>{const tx=db.transaction(STORE,mode);tx.oncomplete=()=>db.close();tx.onerror=()=>reject(tx.error);run(tx.objectStore(STORE),resolve,reject);});}
+export async function saveShot(shot:Shot){await transaction<void>('readwrite',(s,resolve,reject)=>{const r=s.put(shot);r.onsuccess=()=>resolve();r.onerror=()=>reject(r.error);});}
+export async function listShots():Promise<Shot[]>{const shots=await transaction<Shot[]>('readonly',(s,resolve,reject)=>{const r=s.getAll();r.onsuccess=()=>resolve(r.result as Shot[]);r.onerror=()=>reject(r.error);});return shots.sort((a,b)=>b.created-a.created);}
+export async function deleteShot(id:string){await transaction<void>('readwrite',(s,resolve,reject)=>{const r=s.delete(id);r.onsuccess=()=>resolve();r.onerror=()=>reject(r.error);});}
