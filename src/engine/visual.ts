@@ -46,6 +46,7 @@ export class VisualEngine{
   this.canvas=canvas;this.settings=settings;
   this.renderer=new THREE.WebGLRenderer({canvas,alpha:false,antialias:true,preserveDrawingBuffer:true,powerPreference:'high-performance'});
   this.renderer.outputColorSpace=THREE.SRGBColorSpace;
+  this.renderer.debug.checkShaderErrors=true;
   this.scene.background=new THREE.Color('#ffffff');this.scene.fog=new THREE.Fog('#ffffff',30,90);
   this.camera.position.set(0,2,10);
   canvas.addEventListener('pointerdown',this.down);canvas.addEventListener('pointermove',this.move);
@@ -84,8 +85,8 @@ export class VisualEngine{
   const geometry=this.makeGeometry(brush.kind,seed);
   const mesh=new THREE.Mesh(geometry,material);mesh.frustumCulled=false;
   const angle=this.count*2.39996323+pitch*.025,rad=Math.sqrt((this.count%11)/11)*2.2;
-  const center=new THREE.Vector3(Math.cos(angle)*rad,Math.sin(angle*1.3)*1.65,Math.sin(angle)*rad);
-  mesh.position.copy(center);mesh.rotation.set(this.rand()*TAU,this.rand()*TAU,this.rand()*TAU);
+  const center=persistent?new THREE.Vector3(0,0,0):new THREE.Vector3(Math.cos(angle)*rad,Math.sin(angle*1.3)*1.65,Math.sin(angle)*rad);
+  mesh.position.copy(center);mesh.rotation.set(persistent?0:this.rand()*TAU,persistent?0:this.rand()*TAU,persistent?0:this.rand()*TAU);
   mesh.scale.setScalar(.3+velocity*.3);this.scene.add(mesh);
   const form={mesh,material,born:this.time,life:persistent?Infinity:this.range(14,27),seed,center,radius:2.5,kind:brush.kind};this.forms.push(form);if(persistent)this.idleForm=form;
  }
@@ -93,12 +94,12 @@ export class VisualEngine{
  note=(pitch:number,velocity:number)=>{if(this.mode!=='play'||velocity<=0)return;const v=clamp(velocity/127,0,1);this.midi=Math.max(this.midi,v);this.accent=Math.max(this.accent,v);this.spawn(pitch,v);this.camPhase=(this.camPhase+(v>.65?1:0))%5;};
  private animateForms(dt:number){
   for(let i=this.forms.length-1;i>=0;i--){const f=this.forms[i];const age=this.time-f.born;if(age>=f.life){this.dispose(f);this.forms.splice(i,1);continue;}
-   const persistent=f===this.idleForm;const rise=clamp(age/2.3,0,1),fall=persistent?1:clamp((f.life-age)/4.5,0,1),life=Math.min(rise,fall);
+   const persistent=f===this.idleForm;const rise=persistent?1:clamp(age/2.3,0,1),fall=persistent?1:clamp((f.life-age)/4.5,0,1),life=Math.min(rise,fall);
    const breathe=1+.08*Math.sin(this.time*.8+f.seed);
    f.mesh.scale.setScalar((persistent?1.25+this.energy*.95:.6+.7*rise)*breathe);
    f.mesh.rotation.y+=dt*(.06+this.energy*.2);f.mesh.rotation.x+=dt*.035;
    f.mesh.position.y=f.center.y+Math.sin(this.time*.35+f.seed)*.18;
-   f.material.uniforms.uOpacity.value=life*(persistent?.55+this.energy*.25:.55+this.energy*.17);
+   f.material.uniforms.uOpacity.value=life*(persistent?.95+this.energy*.05:.65+this.energy*.17);
    f.material.uniforms.uTime.value=this.time-f.born;f.material.uniforms.uEnergy.value=this.energy;
   }
  }
@@ -110,7 +111,7 @@ export class VisualEngine{
    const t=this.time;const distances=[9,4.2,12,5.7,3.5];
    this.camDistance=smooth(this.camDistance,distances[this.camPhase]*(1-.18*this.energy),1.2);
    const angle=t*[.14,.33,-.17,.48,-.38][this.camPhase];
-   const target=new THREE.Vector3(Math.sin(t*.17)*1.1,Math.sin(t*.21)*.5,Math.cos(t*.15)*.7);
+   const target=new THREE.Vector3(Math.sin(t*.17)*.25,Math.sin(t*.21)*.15,0);
    this.focus.lerp(target,1-Math.exp(-dt*1.5));
    const desired=new THREE.Vector3(Math.sin(angle)*this.camDistance*.9,Math.sin(angle*.7)*2.2,Math.cos(angle)*this.camDistance).add(this.focus);
    this.camera.position.lerp(desired,1-Math.exp(-dt*1.5));this.camera.lookAt(this.focus);
@@ -152,7 +153,7 @@ export class VisualEngine{
   }
   this.syncBackground();this.updateCamera(dt);
   if(this.backgroundMesh)(this.backgroundMesh.material as THREE.MeshBasicMaterial).opacity=this.settings.bgOpacity/100;
-  this.renderer.render(this.scene,this.camera);
+  try{this.renderer.render(this.scene,this.camera);}catch(error){console.error('Sonomorphoz WebGL render failed',error);}
  };
  reveal=()=>{this.mode='reveal';this.running=false;this.shotAngle=0;this.shotElevation=0;this.shotZoom=1;this.printFov=53;};
  printMode=()=>{if(this.mode==='play')this.reveal();this.mode='print';};
