@@ -40,7 +40,7 @@ export class VisualEngine{
  private forms:Form[]=[];private seed=14217;private raf=0;private last=0;private time=0;private activeClock=0;private destroyed=false;
  private cursor=new THREE.Vector3();private heading=new THREE.Vector3(.3,.1,-1).normalize();private focus=new THREE.Vector3();
  private camPhase=0;private camClock=0;private camDistance=9;private camFov=52;private shotAngle=0;private shotElevation=0;private shotZoom=1;private printFov=53;
- private pointer:{x:number;y:number}|null=null;private energy=0;private accent=0;private count=0;
+ private pointer:{x:number;y:number}|null=null;private energy=0;private accent=0;private count=0;private lastSignal=0;private idleForm:Form|null=null;
  private backgroundTexture:THREE.Texture|null=null;private backgroundMesh:THREE.Mesh|null=null;private bgRef:HTMLImageElement|HTMLVideoElement|null=null;
  constructor(canvas:HTMLCanvasElement,settings:Settings){
   this.canvas=canvas;this.settings=settings;
@@ -51,7 +51,7 @@ export class VisualEngine{
   canvas.addEventListener('pointerdown',this.down);canvas.addEventListener('pointermove',this.move);
   canvas.addEventListener('pointerup',this.up);canvas.addEventListener('pointercancel',this.up);
   canvas.addEventListener('wheel',this.wheel,{passive:false});
-  this.resize();this.raf=requestAnimationFrame(this.loop);
+  this.resize();this.spawn(60,.45,true);this.raf=requestAnimationFrame(this.loop);
  }
  private rand(){this.seed=(Math.imul(this.seed,1664525)+1013904223)>>>0;return this.seed/4294967296;}
  private range(a:number,b:number){return a+(b-a)*this.rand();}
@@ -75,8 +75,8 @@ export class VisualEngine{
   }
   const geo=new THREE.BufferGeometry();geo.setAttribute('position',new THREE.Float32BufferAttribute(verts,3));geo.setAttribute('uv',new THREE.Float32BufferAttribute(uvs,2));geo.setIndex(indices);geo.computeVertexNormals();return geo;
  }
- private spawn(pitch=60,velocity=.6){
-  if(this.forms.length>=18){const old=this.forms.shift()!;this.dispose(old);}
+ private spawn(pitch=60,velocity=.6,persistent=false){
+  if(this.forms.length>=18){const index=this.forms.findIndex(f=>f!==this.idleForm);if(index>=0){const old=this.forms.splice(index,1)[0];this.dispose(old);}}
   const brush=this.brushes[this.count%Math.max(1,this.brushes.length)]||this.brushes[0];this.count++;
   const seed=this.rand()*100;const colors=this.settings.colors.filter(c=>/^#[0-9a-f]{6}$/i.test(c));
   const color=brush.color||colors[this.count%Math.max(1,colors.length)]||'#517b79';
@@ -87,18 +87,18 @@ export class VisualEngine{
   const center=new THREE.Vector3(Math.cos(angle)*rad,Math.sin(angle*1.3)*1.65,Math.sin(angle)*rad);
   mesh.position.copy(center);mesh.rotation.set(this.rand()*TAU,this.rand()*TAU,this.rand()*TAU);
   mesh.scale.setScalar(.3+velocity*.3);this.scene.add(mesh);
-  this.forms.push({mesh,material,born:this.time,life:this.range(14,27),seed,center,radius:2.5,kind:brush.kind});
+  const form={mesh,material,born:this.time,life:persistent?Infinity:this.range(14,27),seed,center,radius:2.5,kind:brush.kind};this.forms.push(form);if(persistent)this.idleForm=form;
  }
  private dispose(f:Form){this.scene.remove(f.mesh);f.mesh.geometry.dispose();f.material.dispose();}
  note=(pitch:number,velocity:number)=>{if(this.mode!=='play'||velocity<=0)return;const v=clamp(velocity/127,0,1);this.midi=Math.max(this.midi,v);this.accent=Math.max(this.accent,v);this.spawn(pitch,v);this.camPhase=(this.camPhase+(v>.65?1:0))%5;};
  private animateForms(dt:number){
   for(let i=this.forms.length-1;i>=0;i--){const f=this.forms[i];const age=this.time-f.born;if(age>=f.life){this.dispose(f);this.forms.splice(i,1);continue;}
-   const rise=clamp(age/2.3,0,1),fall=clamp((f.life-age)/4.5,0,1),life=Math.min(rise,fall);
+   const persistent=f===this.idleForm;const rise=clamp(age/2.3,0,1),fall=persistent?1:clamp((f.life-age)/4.5,0,1),life=Math.min(rise,fall);
    const breathe=1+.08*Math.sin(this.time*.8+f.seed);
-   f.mesh.scale.setScalar((.6+.7*rise)*breathe);
+   f.mesh.scale.setScalar((persistent?1.25+this.energy*.95:.6+.7*rise)*breathe);
    f.mesh.rotation.y+=dt*(.06+this.energy*.2);f.mesh.rotation.x+=dt*.035;
    f.mesh.position.y=f.center.y+Math.sin(this.time*.35+f.seed)*.18;
-   f.material.uniforms.uOpacity.value=life*(.55+this.energy*.17);
+   f.material.uniforms.uOpacity.value=life*(persistent?.55+this.energy*.25:.55+this.energy*.17);
    f.material.uniforms.uTime.value=this.time-f.born;f.material.uniforms.uEnergy.value=this.energy;
   }
  }
@@ -146,7 +146,7 @@ export class VisualEngine{
    this.time+=dt;const signal=Math.max(this.audio*2,this.bands.low*.8+this.bands.mid*.8+this.bands.high*.5,this.midi);
    this.energy+=(signal-this.energy)*(1-Math.exp(-dt*7));
    this.activeClock+=dt;
-   if(signal>.075&&this.activeClock>.9+(.7-this.settings.density/180)){this.spawn(60+Math.round(this.bands.mid*24),clamp(signal,0,1));this.activeClock=0;}
+   if(signal>.035&&this.activeClock>.55+(.7-this.settings.density/180)){this.spawn(60+Math.round(this.bands.mid*24),clamp(signal,0,1));this.activeClock=0;}
    this.midi*=Math.exp(-dt*5);this.accent*=Math.exp(-dt*6);
    this.animateForms(dt);
   }
@@ -180,6 +180,6 @@ export class VisualEngine{
   }
  };
  exportSheet=(width=3000)=>{const ratios:Record<PaperFormat,number>={square:1,a4p:210/297,a4l:297/210,a3p:297/420,wide:16/9};return this.exportPrint(width,ratios[this.paperConfig.format]);};
- reset=()=>{for(const f of this.forms)this.dispose(f);this.forms=[];this.time=0;this.activeClock=0;this.count=0;this.mode='play';this.running=true;this.camera.position.set(0,2,10);this.focus.set(0,0,0);this.camPhase=0;this.camClock=0;};
+ reset=()=>{for(const f of this.forms)this.dispose(f);this.forms=[];this.idleForm=null;this.time=0;this.activeClock=0;this.count=0;this.mode='play';this.running=true;this.camera.position.set(0,2,10);this.focus.set(0,0,0);this.camPhase=0;this.camClock=0;this.spawn(60,.45,true);};
  destroy=()=>{this.destroyed=true;cancelAnimationFrame(this.raf);this.canvas.removeEventListener('pointerdown',this.down);this.canvas.removeEventListener('pointermove',this.move);this.canvas.removeEventListener('pointerup',this.up);this.canvas.removeEventListener('pointercancel',this.up);this.canvas.removeEventListener('wheel',this.wheel);for(const f of this.forms)this.dispose(f);if(this.backgroundMesh){this.backgroundMesh.geometry.dispose();(this.backgroundMesh.material as THREE.Material).dispose();}this.backgroundTexture?.dispose();this.renderer.dispose();};
 }
