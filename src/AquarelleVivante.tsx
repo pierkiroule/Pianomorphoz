@@ -12,9 +12,18 @@ const STATES=[
  {name:'Silence · décantation',feed:.022,kill:.056,flow:.07}
 ];
 const N=240;
+const FILTERS=['Osmose','Capillarité','Floraison','Cristallisation','Rémanence','Iridescence'];
+PALETTES.push(
+ {name:'Lagune',paper:[248,250,247],ink:[19,80,109]},
+ {name:'Corail vivant',paper:[252,247,243],ink:[176,56,65]},
+ {name:'Forêt cellulaire',paper:[248,249,243],ink:[36,91,59]},
+ {name:'Sumi-e précieux',paper:[250,249,246],ink:[23,26,30]}
+);
+type LivingSettings={filter:number;intensity:number;autonomy:number;memory:number;blend:boolean};
+const DEFAULT_LIVING:LivingSettings={filter:0,intensity:.68,autonomy:.55,memory:.7,blend:true};
 const PALETTES=[{name:'Sépia botanique',paper:[250,248,242],ink:[38,58,60]},{name:'Bleu de Prusse',paper:[248,250,249],ink:[17,49,91]},{name:'Garance',paper:[252,248,245],ink:[110,35,57]},{name:'Forêt',paper:[248,250,245],ink:[34,75,57]},{name:'Noir sumi-e',paper:[251,250,247],ink:[23,25,29]}];
 const buttonStyle:React.CSSProperties={border:'1px solid #cbd4d0',background:'#fffdf6e8',borderRadius:20,padding:'10px 13px',color:'#284044',fontWeight:600};
-function PixelField({playing,onStats,canvasRef,musicRef,paletteRef,detailRef}:{playing:boolean;onStats:(step:number,fps:number)=>void;canvasRef:React.RefObject<HTMLCanvasElement|null>;musicRef:React.RefObject<{notes:Map<number,number>;pedal:boolean;last:number;connected:boolean}>;paletteRef:React.RefObject<number>;detailRef:React.RefObject<number>}){
+function PixelField({playing,onStats,canvasRef,musicRef,paletteRef,detailRef,livingRef}:{playing:boolean;onStats:(step:number,fps:number)=>void;canvasRef:React.RefObject<HTMLCanvasElement|null>;musicRef:React.RefObject<{notes:Map<number,number>;pedal:boolean;last:number;connected:boolean}>;paletteRef:React.RefObject<number>;detailRef:React.RefObject<number>;livingRef:React.RefObject<LivingSettings>}){
  const canvas=canvasRef;
  const playingRef=useRef(playing);playingRef.current=playing;
  const statsRef=useRef(onStats);statsRef.current=onStats;
@@ -41,6 +50,9 @@ function PixelField({playing,onStats,canvasRef,musicRef,paletteRef,detailRef}:{p
   };seed();
   let frame=0,elapsed=0,raf=0,last=performance.now(),fps=0,count=0,lastFps=last,lastStats=0;
   const pigment=new Float32Array(N*N),membrane=new Float32Array(N*N),wet=new Float32Array(N*N);
+  const history=new Float32Array(N*N),crystal=new Float32Array(N*N);
+  const clamp=(v:number)=>Math.max(0,Math.min(1,v));
+  let livingPhase=0;
   const resize=()=>{const r=target.getBoundingClientRect(),d=Math.min(window.devicePixelRatio||1,1.5);target.width=Math.max(1,Math.floor(r.width*d));target.height=Math.max(1,Math.floor(r.height*d));ctx.setTransform(d,0,0,d,0,0);ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality='high';};
   resize();window.addEventListener('resize',resize);
   const draw=(now:number)=>{
@@ -61,8 +73,13 @@ function PixelField({playing,onStats,canvasRef,musicRef,paletteRef,detailRef}:{p
    const register=pitches.length?pitches.reduce((s,n)=>s+n,0)/pitches.length:60;
    const registerBias=(register-60)/48;
    const palette=PALETTES[paletteRef.current]||PALETTES[0];
+   const living=livingRef.current;
+   const activity=clamp(energy*.75+(musicRef.current.pedal?.15:0));
+   const drive=clamp(living.intensity*(.35+activity*.65));
+   const currentFilter=living.blend?Math.floor(elapsed/13)%FILTERS.length:living.filter;
+   livingPhase+=dt*(.1+living.autonomy*.8);
    if(playingRef.current){
-    for(let iteration=0;iteration<2;iteration++){
+    for(let iteration=0;iteration<(fps>0&&fps<24?1:2);iteration++){
      for(let y=1;y<N-1;y++)for(let x=1;x<N-1;x++){
       const i=y*N+x,aa=a[i],bb=b[i];
       const lapA=-aa+.2*(a[i-1]+a[i+1]+a[i-N]+a[i+N])+.05*(a[i-N-1]+a[i-N+1]+a[i+N-1]+a[i+N+1]);
@@ -96,14 +113,22 @@ function PixelField({playing,onStats,canvasRef,musicRef,paletteRef,detailRef}:{p
     const boundary=Math.pow(Math.max(0,1-Math.abs(oil)),13)*Math.max(0,Math.min(1,v*5+.13));
     const micro=Math.pow(Math.max(0,1-Math.abs(cells)),10)*Math.max(0,Math.min(1,v*3));
     const density=Math.max(0,Math.min(1,v*2.45));
+    const dendrite=Math.pow(clamp(1-Math.abs(Math.sin(x*.27+Math.sin(y*.06+t*.12)*4)*Math.cos(y*.31+Math.sin(x*.04-t*.09)*3))),15);
+    const rings=Math.pow(clamp(1-Math.abs(Math.sin(r*155+swirl*7+t*.12))),16);
+    const mineral=Math.pow(clamp(1-Math.abs(Math.sin(x*.19+y*.13+Math.sin(y*.08+t*.03)*4))),24);
+    const floral=Math.pow(clamp(1-Math.abs(Math.sin(Math.atan2(yy,xx)*9+r*65-t*.18))),12);
+    const effects=[boundary+micro*.3,dendrite*density,floral*density,mineral*density,history[i],rings*density];
+    const material=clamp((effects[currentFilter]*(living.blend?.75:1)+effects[(currentFilter+1)%6]*(living.blend?.25:0))*drive);
+    history[i]=clamp(history[i]*(.93+living.memory*.069)+material*.014);
+    crystal[i]=clamp(crystal[i]*.986+mineral*density*.014);
     pigment[i]=pigment[i]*.992+density*.008;
     wet[i]=wet[i]*.991+Math.max(0,1-grad*9)*density*.009;
-    membrane[i]=membrane[i]*.96+(boundary+micro*.32)*.04;
+    membrane[i]=membrane[i]*.96+(boundary+micro*.32+material*.8)*.04;
     const mist=Math.max(0,Math.min(1,(v*.75+pigment[i]*.22+Math.sin(xx*8+yy*9+t*.1)*.012)));
     const edge=Math.min(1,grad*3.8);
     const capillary=Math.pow(Math.max(0,Math.sin(x*.51+Math.sin(y*.027+t*.06)*4)*Math.sin(y*.43+Math.cos(x*.033-t*.05)*4)),13)*density;
-    const dark=Math.min(1,density*.77+membrane[i]*.48+edge*.24+capillary*.17+wet[i]*.12);
-    const gold=Math.min(1,(Math.sin(xx*8+yy*13+t*.09)+1)*.5*membrane[i]*.65);
+    const dark=clamp(density*.71+membrane[i]*.45+edge*.24+capillary*.15+wet[i]*.12+material*.27+history[i]*living.memory*.18+crystal[i]*.08);
+    const gold=clamp((Math.sin(xx*8+yy*13+t*.09)+1)*.5*membrane[i]*.65+(currentFilter===5?material*.55:0));
     const grain=((x*73+y*131+x*y*17)%101)/101-.5;
     const bloom=Math.pow(Math.max(0,1-Math.abs(Math.sin((xx*xx+yy*yy)*330+swirl*3+t*.15))),18)*density*.09;
     const p=i*4;
@@ -142,8 +167,8 @@ function PixelField({playing,onStats,canvasRef,musicRef,paletteRef,detailRef}:{p
 }
 export default function Prototype(){
  const [playing,setPlaying]=useState(true),[step,setStep]=useState(0),[fps,setFps]=useState(0);
- const [palette,setPalette]=useState(0),[detail,setDetail]=useState(1),[previewOpen,setPreviewOpen]=useState(false),[captureSeconds,setCaptureSeconds]=useState(0);
- const paletteRef=useRef(0),detailRef=useRef(1),recordStart=useRef(0),captureClock=useRef<number|null>(null);
+ const [living,setLiving]=useState<LivingSettings>(DEFAULT_LIVING),[palette,setPalette]=useState(0),[detail,setDetail]=useState(1),[previewOpen,setPreviewOpen]=useState(false),[captureSeconds,setCaptureSeconds]=useState(0);
+ const livingRef=useRef<LivingSettings>({...DEFAULT_LIVING}),paletteRef=useRef(0),detailRef=useRef(1),recordStart=useRef(0),captureClock=useRef<number|null>(null);
  const [midiStatus,setMidiStatus]=useState('Démo automatique'),[recording,setRecording]=useState(false),[recorded,setRecorded]=useState('');
  const [devices,setDevices]=useState<MediaDeviceInfo[]>([]),[deviceId,setDeviceId]=useState(''),[recordStatus,setRecordStatus]=useState('');
  const [panel,setPanel]=useState(false),[sessions,setSessions]=useState<MidiSession[]>([]),[selected,setSelected]=useState(''),[taking,setTaking]=useState(false),[replaying,setReplaying]=useState(false),[midiInputs,setMidiInputs]=useState<{id:string;name:string}[]>([]),[midiOutputs,setMidiOutputs]=useState<{id:string;name:string}[]>([]),[midiInput,setMidiInput]=useState(''),[midiOutput,setMidiOutput]=useState('');
@@ -152,6 +177,7 @@ export default function Prototype(){
  const musicRef=useRef({notes:new Map<number,number>(),pedal:false,last:0,connected:false});
  const midiAccessRef=useRef<MIDIAccess|null>(null),recorderRef=useRef<MediaRecorder|null>(null),streamRef=useRef<MediaStream|null>(null);
  useEffect(()=>()=>{if(recorded)URL.revokeObjectURL(recorded);},[recorded]);
+ function updateLiving(patch:Partial<LivingSettings>){const next={...livingRef.current,...patch};livingRef.current=next;setLiving(next);}
  useEffect(()=>()=>{if(captureClock.current!==null)clearInterval(captureClock.current);},[]);
  useEffect(()=>{void loadSessions().then(setSessions).catch(e=>setRecordStatus(String(e)));},[]);
  useEffect(()=>()=>{playbackTimers.current.forEach(clearTimeout);midiAccessRef.current?.inputs.forEach(input=>{input.onmidimessage=null;});if(recorderRef.current?.state==='recording')recorderRef.current.stop();streamRef.current?.getTracks().forEach(t=>t.stop());},[]);
@@ -244,9 +270,9 @@ export default function Prototype(){
   }catch(error){setRecordStatus('Enregistrement : '+String(error));setRecording(false);}
  }
  return <main style={{position:'fixed',inset:0,overflow:'hidden',background:'#faf8f1',fontFamily:'system-ui,sans-serif',color:'#284044'}}>
-  <PixelField playing={playing} canvasRef={canvasRef} musicRef={musicRef} paletteRef={paletteRef} detailRef={detailRef} onStats={(s,f)=>{setStep(s);setFps(f);}}/>
+  <PixelField playing={playing} canvasRef={canvasRef} musicRef={musicRef} paletteRef={paletteRef} detailRef={detailRef} livingRef={livingRef} onStats={(s,f)=>{setStep(s);setFps(f);}}/>
   <div style={{position:'absolute',top:14,left:14,right:14,display:'flex',justifyContent:'space-between',pointerEvents:'none'}}>
-   <div style={{padding:'10px 13px',borderRadius:15,background:'#fffdf6e0'}}><strong style={{fontSize:12,letterSpacing:1}}>AQUARELLE VIVANTE •°</strong><div style={{fontSize:11,opacity:.7}}>V7 · matière organique résonante</div></div>
+   <div style={{padding:'10px 13px',borderRadius:15,background:'#fffdf6e0'}}><strong style={{fontSize:12,letterSpacing:1}}>AQUARELLE VIVANTE •°</strong><div style={{fontSize:11,opacity:.7}}>V9 · filtres vivants résonants</div></div>
    <div style={{fontSize:12,padding:11,borderRadius:15,background:'#fffdf6e0'}}>{fps} FPS</div>
   </div>
   <div style={{position:'absolute',bottom:16,left:14,right:14,display:'flex',alignItems:'center',justifyContent:'space-between',gap:10}}>
@@ -264,6 +290,11 @@ export default function Prototype(){
    <button style={buttonStyle} onClick={()=>void toggleTake()}>{taking?'■ Terminer la prise MIDI':'● Enregistrer MIDI'}</button>
    <label style={{display:'block',marginTop:12}}>Sessions enregistrées<select style={{width:'100%'}} value={selected} onChange={e=>setSelected(e.target.value)}><option value=''>Choisir une session</option>{sessions.map(s=><option key={s.id} value={s.id}>{s.name} ({Math.round(s.duration/1000)} s)</option>)}</select></label>
    <div style={{display:'flex',flexWrap:'wrap',gap:6,marginTop:8}}><button style={buttonStyle} disabled={!selected||replaying} onClick={playSession}>▶ Rejouer</button><button style={buttonStyle} disabled={!replaying} onClick={stopPlayback}>■ Stop</button><button style={buttonStyle} disabled={!selected} onClick={exportSession}>JSON</button><button style={buttonStyle} disabled={!selected} onClick={()=>void removeSession()}>Supprimer</button></div>
+   <h3>Filtres vivants · V9</h3>
+   <p style={{fontSize:11}}>Matières évolutives, mémoire pigmentaire et autonomie.</p>
+   <label style={{display:'block'}}>Matière dominante<select style={{width:'100%'}} value={living.filter} onChange={e=>updateLiving({filter:Number(e.target.value),blend:false})}>{FILTERS.map((name,i)=><option key={name} value={i}>{name}</option>)}</select></label>
+   <label style={{display:'block',marginTop:10}}><input type='checkbox' checked={living.blend} onChange={e=>updateLiving({blend:e.target.checked})}/> Évolution automatique des matières</label>
+   {([['intensity','Intensité'],['autonomy','Autonomie'],['memory','Mémoire']] as const).map(([key,label])=><label key={key} style={{display:'block',marginTop:10}}>{label} · {Math.round(living[key]*100)} %<input style={{width:'100%'}} type='range' min='0' max='1' step='.05' value={living[key]} onChange={e=>updateLiving({[key]:Number(e.target.value)})}/></label>)}
    <h3>Direction artistique</h3>
    <label style={{display:'block'}}>Palette picturale<select style={{width:'100%'}} value={palette} onChange={e=>{const v=Number(e.target.value);setPalette(v);paletteRef.current=v;}}>{PALETTES.map((p,i)=><option key={p.name} value={i}>{p.name}</option>)}</select></label>
    <label style={{display:'block',marginTop:12}}>Détails organiques · {Math.round(detail*100)} %<input style={{width:'100%'}} type='range' min='.2' max='1' step='.1' value={detail} onChange={e=>{const v=Number(e.target.value);setDetail(v);detailRef.current=v;}}/></label>
