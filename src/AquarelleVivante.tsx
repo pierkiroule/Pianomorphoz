@@ -45,10 +45,11 @@ function PixelField({playing,onStats,canvasRef,musicRef}:{playing:boolean;onStat
    if(playingRef.current)elapsed+=dt;
    const active=[...musicRef.current.notes.entries()];
    const pitches=active.map(([n])=>n),velocity=active.reduce((sum,[,v])=>sum+v,0)/Math.max(1,active.length)/127;
+   const pcs=new Set(pitches.map(n=>n%12));
    const root=pitches.length?Math.min(...pitches)%12:0;
-   const intervals=new Set(pitches.map(n=>(n-root+120)%12));
-   const major=intervals.has(4)&&intervals.has(7),minor=intervals.has(3)&&intervals.has(7);
-   const diminished=intervals.has(3)&&intervals.has(6),suspended=(intervals.has(5)||intervals.has(2))&&!major&&!minor;
+   const has=(intervals:number[])=>[...pcs].some(r=>intervals.every(i=>pcs.has((r+i)%12)));
+   const major=has([0,4,7]),minor=has([0,3,7]);
+   const diminished=has([0,3,6]),suspended=(has([0,5,7])||has([0,2,7]))&&!major&&!minor;
    const midiStep=major?0:minor?1:diminished?3:suspended?2:pitches.length?4:5;
    const step=musicRef.current.connected?midiStep:Math.floor(elapsed/7)%STATES.length;
    const state=STATES[step];
@@ -135,6 +136,7 @@ function PixelField({playing,onStats,canvasRef,musicRef}:{playing:boolean;onStat
 export default function Prototype(){
  const [playing,setPlaying]=useState(true),[step,setStep]=useState(0),[fps,setFps]=useState(0);
  const [midiStatus,setMidiStatus]=useState('Démo automatique'),[recording,setRecording]=useState(false),[recorded,setRecorded]=useState('');
+ const [devices,setDevices]=useState<MediaDeviceInfo[]>([]),[deviceId,setDeviceId]=useState(''),[recordStatus,setRecordStatus]=useState('');
  const canvasRef=useRef<HTMLCanvasElement>(null);
  const musicRef=useRef({notes:new Map<number,number>(),pedal:false,last:0,connected:false});
  const midiAccessRef=useRef<MIDIAccess|null>(null),recorderRef=useRef<MediaRecorder|null>(null),streamRef=useRef<MediaStream|null>(null);
@@ -158,6 +160,15 @@ export default function Prototype(){
    };bind();access.onstatechange=bind;
   }catch(error){setMidiStatus(String(error));}
  }
+ async function selectAudio(){
+  try{
+   const probe=await navigator.mediaDevices.getUserMedia({audio:true});
+   const list=await navigator.mediaDevices.enumerateDevices();probe.getTracks().forEach(t=>t.stop());
+   const inputs=list.filter(d=>d.kind==='audioinput');setDevices(inputs);
+   if(inputs.length===1)setDeviceId(inputs[0].deviceId);
+   setRecordStatus('Choisir une entrée audio, idéalement Yamaha USB.');
+  }catch(error){setRecordStatus('Entrées audio : '+String(error));}
+ }
  async function toggleRecording(){
   if(recorderRef.current?.state==='recording'){recorderRef.current.stop();setRecording(false);return;}
   try{
@@ -165,15 +176,20 @@ export default function Prototype(){
    const video=canvasRef.current.captureStream(30);
    // Optional microphone capture. Never play captured audio back to speakers.
    let audio:MediaStream|null=null;
-   try{audio=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}});}catch{setMidiStatus(s=>s+' · vidéo sans son');}
+   try{
+    audio=await navigator.mediaDevices.getUserMedia({audio:{deviceId:deviceId?{exact:deviceId}:undefined,channelCount:{ideal:2},echoCancellation:false,noiseSuppression:false,autoGainControl:false}});
+    const actual=audio.getAudioTracks()[0]?.getSettings().deviceId;
+    if(deviceId&&actual&&actual!==deviceId)throw Error('Entrée audio sélectionnée non respectée');
+    setRecordStatus('Capture audio active · aucune restitution vers les enceintes');
+   }catch(error){audio?.getTracks().forEach(t=>t.stop());audio=null;setRecordStatus('Vidéo sans audio : '+String(error));}
    const stream=new MediaStream([...video.getVideoTracks(),...(audio?.getAudioTracks()||[])]);
    streamRef.current=stream;
-   const mime=['video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm'].find(x=>MediaRecorder.isTypeSupported(x));
+   const mime=['video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm','video/mp4'].find(x=>MediaRecorder.isTypeSupported(x));
    const recorder=new MediaRecorder(stream,mime?{mimeType:mime}:undefined),chunks:BlobPart[]=[];
    recorder.ondataavailable=e=>{if(e.data.size)chunks.push(e.data);};
-   recorder.onstop=()=>{const blob=new Blob(chunks,{type:recorder.mimeType||'video/webm'});const url=URL.createObjectURL(blob);setRecorded(old=>{if(old)URL.revokeObjectURL(old);return url;});stream.getTracks().forEach(t=>t.stop());streamRef.current=null;setRecording(false);};
+   recorder.onstop=()=>{const blob=new Blob(chunks,{type:recorder.mimeType||'video/webm'});const url=URL.createObjectURL(blob);setRecorded(old=>{if(old)URL.revokeObjectURL(old);return url;});stream.getTracks().forEach(t=>t.stop());streamRef.current=null;setRecording(false);setRecordStatus('Enregistrement terminé · fichier disponible');};
    recorderRef.current=recorder;recorder.start(1000);setRecording(true);
-  }catch(error){setMidiStatus('Enregistrement : '+String(error));setRecording(false);}
+  }catch(error){setRecordStatus('Enregistrement : '+String(error));setRecording(false);}
  }
  return <main style={{position:'fixed',inset:0,overflow:'hidden',background:'#faf8f1',fontFamily:'system-ui,sans-serif',color:'#284044'}}>
   <PixelField playing={playing} canvasRef={canvasRef} musicRef={musicRef} onStats={(s,f)=>{setStep(s);setFps(f);}}/>
@@ -183,9 +199,11 @@ export default function Prototype(){
   </div>
   <div style={{position:'absolute',bottom:16,left:14,right:14,display:'flex',alignItems:'center',justifyContent:'space-between',gap:10}}>
    <div style={{background:'#fffdf6ed',borderRadius:15,padding:'10px 13px'}}><div style={{fontSize:10,opacity:.6}}>{musicRef.current.connected?'HARMONIE MIDI':'HARMONIE SIMULÉE'}</div><strong style={{fontSize:13}}>{STATES[step].name}</strong></div>
-   <div style={{display:'flex',gap:6,flexWrap:'wrap',justifyContent:'flex-end'}}><button style={buttonStyle} onClick={connectMidi}>MIDI</button><button style={buttonStyle} onClick={toggleRecording}>{recording?'■ Stop vidéo':'● Vidéo'}</button><button style={buttonStyle} onClick={()=>setPlaying(v=>!v)}>{playing?'Ⅱ':'▶'}</button></div>
+   <div style={{display:'flex',gap:6,flexWrap:'wrap',justifyContent:'flex-end'}}><button style={buttonStyle} onClick={connectMidi}>MIDI</button><button style={buttonStyle} onClick={selectAudio}>Audio</button><button style={buttonStyle} onClick={toggleRecording}>{recording?'■ Stop vidéo':'● Vidéo'}</button><button style={buttonStyle} onClick={()=>setPlaying(v=>!v)}>{playing?'Ⅱ':'▶'}</button></div>
   </div>
   <div style={{position:'absolute',top:70,left:14,fontSize:11,background:'#fffdf6d9',padding:'5px 9px',borderRadius:10}}>{midiStatus}</div>
-  {recorded&&<a href={recorded} download={'aquarelle-vivante-'+Date.now()+'.webm'} style={{position:'absolute',top:105,left:14,...buttonStyle,textDecoration:'none',fontSize:12}}>Télécharger la vidéo WebM</a>}
+  {devices.length>0&&<div style={{position:'absolute',top:100,left:14,background:'#fffdf6ed',padding:8,borderRadius:12,maxWidth:'85vw'}}><label style={{fontSize:11}}>Source audio <select value={deviceId} onChange={e=>setDeviceId(e.target.value)}><option value=''>Microphone par défaut</option>{devices.map(d=><option key={d.deviceId} value={d.deviceId}>{d.label||'Entrée audio'}</option>)}</select></label></div>}
+  {recordStatus&&<div style={{position:'absolute',top:150,left:14,fontSize:11,background:'#fffdf6ed',padding:'5px 9px',borderRadius:9,maxWidth:'80vw'}}>{recordStatus}</div>}
+  {recorded&&<a href={recorded} download={'aquarelle-vivante-'+Date.now()+'.webm'} style={{position:'absolute',top:185,left:14,...buttonStyle,textDecoration:'none',fontSize:12}}>Télécharger la vidéo WebM</a>}
  </main>;
 }
