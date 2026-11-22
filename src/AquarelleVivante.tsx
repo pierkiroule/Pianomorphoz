@@ -93,6 +93,26 @@ function PixelField({playing,onStats,canvasRef,musicRef,paletteRef,detailRef,liv
     wet[i]=Math.min(1,wet[i]+w*.12);
    }
   };
+  // Lightweight Three.js veil landscape. Rendered offscreen, then composited into
+  // the same capture canvas so PNG and MediaRecorder include the optical scene.
+  let renderer:THREE.WebGLRenderer|null=null;
+  let scene:THREE.Scene|null=null,camera:THREE.PerspectiveCamera|null=null;
+  let veilTexture:THREE.CanvasTexture|null=null;
+  const veils:THREE.Mesh<THREE.PlaneGeometry,THREE.MeshBasicMaterial>[]=[];
+  try{
+   renderer=new THREE.WebGLRenderer({alpha:false,antialias:false,powerPreference:'low-power',preserveDrawingBuffer:true});
+   renderer.setPixelRatio(1);
+   scene=new THREE.Scene();scene.background=new THREE.Color('#faf8f1');scene.fog=new THREE.Fog('#faf8f1',3.5,9);
+   camera=new THREE.PerspectiveCamera(37,1,.1,30);camera.position.set(0,0,4.6);
+   veilTexture=new THREE.CanvasTexture(buffer);veilTexture.colorSpace=THREE.SRGBColorSpace;
+   for(let k=0;k<3;k++){
+    const geometry=new THREE.PlaneGeometry(3.05,3.05,12,12);
+    const material=new THREE.MeshBasicMaterial({map:veilTexture,transparent:true,opacity:k===0?.9:k===1?.29:.16,depthWrite:false,side:THREE.DoubleSide});
+    const mesh=new THREE.Mesh(geometry,material);mesh.position.z=-k*.68;
+    mesh.rotation.z=(k-1)*.14;mesh.rotation.y=(k-1)*.13;
+    scene.add(mesh);veils.push(mesh);
+   }
+  }catch{renderer?.dispose();renderer=null;}
   const resize=()=>{const r=target.getBoundingClientRect(),d=Math.min(window.devicePixelRatio||1,1.5);target.width=Math.max(1,Math.floor(r.width*d));target.height=Math.max(1,Math.floor(r.height*d));ctx.setTransform(d,0,0,d,0,0);ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality='high';};
   resize();window.addEventListener('resize',resize);
   const draw=(now:number)=>{
@@ -207,7 +227,35 @@ function PixelField({playing,onStats,canvasRef,musicRef,paletteRef,detailRef,liv
    const width=target.clientWidth,height=target.clientHeight;
    ctx.fillStyle='#faf8f1';ctx.fillRect(0,0,width,height);
    const size=Math.min(width,height)*.98;
-   ctx.drawImage(buffer,(width-size)/2,(height-size)/2,size,size);
+   if(renderer&&scene&&camera&&veilTexture&&frame%2===0){
+    const scale=Math.min(1,Math.max(.4,Math.min(width,height)/700));
+    renderer.setSize(Math.max(1,Math.floor(width*scale)),Math.max(1,Math.floor(height*scale)),false);
+    camera.aspect=width/Math.max(1,height);camera.updateProjectionMatrix();
+    camera.position.x=Math.sin(elapsed*.045)*.22;
+    camera.position.y=Math.cos(elapsed*.034)*.16;
+    camera.position.z=4.6+Math.sin(elapsed*.028)*.25;
+    camera.lookAt(0,0,-.45);
+    veils.forEach((veil,k)=>{
+     veil.rotation.z=(k-1)*.14+Math.sin(elapsed*.07+k)*.065;
+     veil.rotation.y=(k-1)*.13+Math.sin(elapsed*.11+k)*.09;
+     veil.position.x=Math.sin(elapsed*.09+k*2.1)*.12;
+     const pos=veil.geometry.attributes.position as THREE.BufferAttribute;
+     for(let j=0;j<pos.count;j++){
+      const x=pos.getX(j),y=pos.getY(j);
+      pos.setZ(j,Math.sin(x*2.3+elapsed*.21+k)*Math.cos(y*2.5-elapsed*.16)*(.045+perception.energy*.075));
+     }
+     pos.needsUpdate=true;
+    });
+    veilTexture.needsUpdate=true;renderer.render(scene,camera);
+   }
+   if(renderer&&frame%2===0){
+    ctx.drawImage(renderer.domElement,0,0,width,height);
+    ctx.save();ctx.globalAlpha=.1;ctx.filter='blur(11px)';
+    ctx.drawImage(renderer.domElement,-width*.015,-height*.015,width*1.03,height*1.03);
+    ctx.restore();
+   }else if(!renderer){
+    ctx.drawImage(buffer,(width-size)/2,(height-size)/2,size,size);
+   }
    // Fine, deterministic pigment fibers at display resolution, independent of simulation pixels.
    ctx.save();ctx.globalCompositeOperation='multiply';
    for(let j=0;j<Math.round(80+detailRef.current*140);j++){
@@ -227,7 +275,7 @@ function PixelField({playing,onStats,canvasRef,musicRef,paletteRef,detailRef,liv
    if(now-lastStats>400){lastStats=now;statsRef.current(step,fps);}
   };
   raf=requestAnimationFrame(draw);
-  return()=>{cancelAnimationFrame(raf);window.removeEventListener('resize',resize);};
+  return()=>{cancelAnimationFrame(raf);window.removeEventListener('resize',resize);veils.forEach(v=>{v.geometry.dispose();v.material.dispose();});veilTexture?.dispose();renderer?.dispose();};
  },[]);
  return <canvas ref={canvas} style={{position:'absolute',inset:0,width:'100%',height:'100%',display:'block'}}/>;
 }
