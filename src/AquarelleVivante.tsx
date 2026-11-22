@@ -126,19 +126,24 @@ function PixelField({playing,immersive,onStats,canvasRef,musicRef,paletteRef,det
   let veilTexture:THREE.CanvasTexture|null=null;
   const veils:THREE.Mesh<THREE.PlaneGeometry,THREE.MeshBasicMaterial>[]=[];
   let cosmos:THREE.InstancedMesh<THREE.IcosahedronGeometry,THREE.MeshPhongMaterial>|null=null;
-  const cosmosCount=280;
+  const cosmosCount=440;
   const cosmosPositions=new Float32Array(cosmosCount*3);
   const cosmosSizes=new Float32Array(cosmosCount);
   const cosmosDummy=new THREE.Object3D();
   let cosmosCursor=0,flight=0,flightMix=0;
+  const corridorLength=36;
+  const flightSpeed=2.1;
   const fract=(v:number)=>v-Math.floor(v);
-  const scatter=(i:number,forward:boolean)=>{
-   const a=fract(i*.61803398875)*Math.PI*2,r=Math.sqrt(fract(i*.754877666))*(1.6+fract(i*.193)*1.4);
-   const k=i*3;cosmosPositions[k]=Math.cos(a)*r;cosmosPositions[k+1]=Math.sin(a)*r;
-   cosmosPositions[k+2]=forward?-7.5-fract(i*.56984)*5:-1.2-fract(i*.56984)*12;
-   cosmosSizes[i]=.025+fract(i*.371)*.085;
+  const scatter=(i:number,offset=0)=>{
+   const angle=fract(i*.61803398875)*Math.PI*2;
+   const radial=Math.sqrt(fract(i*.754877666))*(1.4+fract(i*.193)*2.2);
+   const k=i*3;
+   cosmosPositions[k]=Math.cos(angle)*radial;
+   cosmosPositions[k+1]=Math.sin(angle)*radial;
+   cosmosPositions[k+2]=-1-fract(i*.56984029)*corridorLength-offset;
+   cosmosSizes[i]=.035+fract(i*.371)*.15;
   };
-  for(let i=0;i<cosmosCount;i++)scatter(i,false);
+  for(let i=0;i<cosmosCount;i++)scatter(i);
   const emitCosmos=(event:Gesture)=>{
    const power=event.velocity/127,count=Math.min(9,2+Math.floor(power*7));
    for(let j=0;j<count;j++){
@@ -146,18 +151,18 @@ function PixelField({playing,immersive,onStats,canvasRef,musicRef,paletteRef,det
     const angle=event.note*2.399963+j*2.1;
     const radius=.2+Math.sqrt(j/count)*(.65+power*.65);
     cosmosPositions[k]=Math.cos(angle)*radius;cosmosPositions[k+1]=Math.sin(angle)*radius;
-    cosmosPositions[k+2]=-4.5-power*3-j*.13;
+    cosmosPositions[k+2]=-flight-4.5-power*3-j*.13;
     cosmosSizes[i]=.035+power*.16*(j===0?1:.55);
    }
   };
   try{
    renderer=new THREE.WebGLRenderer({alpha:false,antialias:false,powerPreference:'low-power',preserveDrawingBuffer:true});
    renderer.setPixelRatio(1);
-   scene=new THREE.Scene();scene.background=new THREE.Color('#faf8f1');scene.fog=new THREE.Fog('#faf8f1',3.5,9);
+   scene=new THREE.Scene();scene.background=new THREE.Color('#faf8f1');scene.fog=new THREE.FogExp2('#faf8f1',.026);
    camera=new THREE.PerspectiveCamera(37,1,.1,30);camera.position.set(0,0,4.6);
    const ambient=new THREE.AmbientLight('#ffffff',1.6);scene.add(ambient);
    const light=new THREE.PointLight('#d9eaf2',16,20);light.position.set(-2,2,2);scene.add(light);
-   const geometry=new THREE.IcosahedronGeometry(1,1);
+   const geometry=new THREE.IcosahedronGeometry(1,2);
    const material=new THREE.MeshPhongMaterial({color:'#a7c6cf',transparent:true,opacity:.72,shininess:115,specular:'#ffffff',depthWrite:false});
    cosmos=new THREE.InstancedMesh(geometry,material,cosmosCount);cosmos.frustumCulled=false;scene.add(cosmos);
    veilTexture=new THREE.CanvasTexture(veilCanvas);veilTexture.colorSpace=THREE.SRGBColorSpace;
@@ -322,26 +327,27 @@ function PixelField({playing,immersive,onStats,canvasRef,musicRef,paletteRef,det
     // FPV: true forward travel through the droplet field, never a static zoom.
     const targetMix=immersiveRef.current?1:0;
     flightMix+=(targetMix-flightMix)*Math.min(1,dt*1.8);
-    if(playingRef.current)flight+=dt*(.33+perception.energy*.65)*flightMix;
+    if(playingRef.current)flight+=dt*(flightSpeed+perception.energy*2.8)*flightMix;
     const pathX=Math.sin(flight*.29)*.58+Math.sin(flight*.11)*.22;
     const pathY=Math.cos(flight*.23)*.42;
     const orbitX=Math.sin(elapsed*.045)*.22,orbitY=Math.cos(elapsed*.034)*.16;
     camera.fov=37+flightMix*33;camera.updateProjectionMatrix();
     camera.position.x=orbitX*(1-flightMix)+pathX*flightMix;
     camera.position.y=orbitY*(1-flightMix)+pathY*flightMix;
-    camera.position.z=(4.6+Math.sin(elapsed*.028)*.25)*(1-flightMix)+flightMix*.65;
-    camera.lookAt(pathX*flightMix*.35,pathY*flightMix*.35,-2.7*flightMix-.45*(1-flightMix));
+    camera.position.z=(4.6+Math.sin(elapsed*.028)*.25)*(1-flightMix)+flightMix*(-flight);
+    camera.lookAt(pathX*flightMix*.35+Math.sin(flight*.37)*flightMix*.28,pathY*flightMix*.35,-(flight+7)*flightMix-.45*(1-flightMix));
     camera.rotation.z+=flightMix*Math.sin(flight*.2)*.035;
     if(cosmos){
      for(let i=0;i<cosmosCount;i++){
       const k=i*3;
-      if(playingRef.current&&flightMix>.01){
-       cosmosPositions[k+2]+=dt*(.4+perception.energy*1.1)*flightMix;
-       if(cosmosPositions[k+2]>2.1)scatter(i,true);
+      // The camera crosses actual world-space drops. Recycle those left behind,
+      // ahead of the camera; no fresh pigment or note-triggered drops in silence.
+      if(cosmosPositions[k+2]>camera.position.z+1.2){
+       cosmosPositions[k+2]-=corridorLength;
       }
+      const relativeDepth=camera.position.z-cosmosPositions[k+2];
       cosmosDummy.position.set(cosmosPositions[k],cosmosPositions[k+1],cosmosPositions[k+2]);
-      const depth=Math.max(.3,Math.min(1.5,(cosmosPositions[k+2]+13)/12));
-      const scale=cosmosSizes[i]*(.7+depth*.3);
+      const scale=cosmosSizes[i]*(1+Math.max(0,1-relativeDepth/6)*.38);
       cosmosDummy.scale.set(scale,scale*(.65+Math.sin(i*1.7)*.3),scale);
       cosmosDummy.updateMatrix();cosmos.setMatrixAt(i,cosmosDummy.matrix);
      }
@@ -353,7 +359,7 @@ function PixelField({playing,immersive,onStats,canvasRef,musicRef,paletteRef,det
      veil.rotation.z=(k-1)*.14+Math.sin(elapsed*.07+k)*.065;
      veil.rotation.y=(k-1)*.13+Math.sin(elapsed*.11+k)*.09;
      veil.position.x=Math.sin(elapsed*.09+k*2.1)*.12;
-     veil.position.z=-k*.68-flightMix*(3+k*.7);
+     veil.position.z=-k*.68-flightMix*(flight+12+k*2);
      veil.material.opacity=(k===0?.9:k===1?.29:.16)*(1-flightMix*.74);
      const pos=veil.geometry.attributes.position as THREE.BufferAttribute;
      for(let j=0;j<pos.count;j++){
