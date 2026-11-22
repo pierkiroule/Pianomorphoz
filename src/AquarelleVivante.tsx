@@ -337,6 +337,8 @@ export default function Prototype(){
  const canvasRef=useRef<HTMLCanvasElement>(null);
  const [hasGesture,setHasGesture]=useState(false);
  const [midiDiagnostic,setMidiDiagnostic]=useState('Aucune note MIDI reçue');
+ const [midiError,setMidiError]=useState('');
+ const [midiConnecting,setMidiConnecting]=useState(false);
  const musicRef=useRef({notes:new Map<number,number>(),pedal:false,last:0,connected:false,impulses:[] as Gesture[],audioEnergy:0});
  const listenRef=useRef<{stream:MediaStream;context:AudioContext;timer:number}|null>(null),[listening,setListening]=useState(false);
  const midiAccessRef=useRef<MIDIAccess|null>(null),recorderRef=useRef<MediaRecorder|null>(null),streamRef=useRef<MediaStream|null>(null);
@@ -393,12 +395,29 @@ export default function Prototype(){
   setMidiStatus(inputs.length?'MIDI : '+inputs.length+' entrée(s) USB écoutée(s)':'Aucune entrée MIDI USB détectée');
  }
  async function connectMidi(){
+  if(midiConnecting)return;
+  setMidiConnecting(true);setMidiError('');setMidiStatus('Initialisation MIDI USB…');
   try{
-   if(!navigator.requestMIDIAccess)throw Error('Web MIDI indisponible. Utiliser Chrome ou Edge sur PC.');
-   const access=await navigator.requestMIDIAccess({sysex:false});midiAccessRef.current=access;
+   if(!window.isSecureContext)throw new Error('Web MIDI nécessite HTTPS.');
+   if(!navigator.requestMIDIAccess)throw new Error('Web MIDI non disponible. Ouvrir dans Chrome ou Edge sur ordinateur.');
+   // Reuse an already initialized system session; avoid competing requests.
+   const access=midiAccessRef.current??await navigator.requestMIDIAccess({sysex:false});
+   midiAccessRef.current=access;
    bindMidi(access);
    access.onstatechange=()=>bindMidi(access);
-  }catch(error){setMidiStatus('Connexion MIDI : '+String(error));}
+  }catch(error){
+   const name=error instanceof DOMException?error.name:'';
+   const msg=error instanceof Error?error.message:String(error);
+   musicRef.current.connected=false;
+   setMidiInputs([]);setMidiOutputs([]);
+   setMidiError(name==='InvalidStateError'||msg.includes('Platform dependent initialization failed')
+    ?'Le navigateur ne parvient pas à ouvrir le service MIDI du système. Débrancher/rebrancher le câble USB, fermer les autres logiciels MIDI, puis relancer Chrome ou Edge. Sur Windows, vérifier le pilote Yamaha Steinberg USB si requis par le modèle.'
+    :name==='NotAllowedError'||name==='SecurityError'
+    ?'Autorisation MIDI refusée. Autoriser MIDI dans les paramètres du site, puis réessayer.'
+    :msg);
+   setMidiStatus('MIDI indisponible · mode test et audio toujours utilisables');
+   setMidiDiagnostic('Aucune note reçue — MIDI non initialisé');
+  }finally{setMidiConnecting(false);}
  }
  function stopPlayback(){
   playbackTimers.current.forEach(clearTimeout);playbackTimers.current=[];replayRef.current=false;setReplaying(false);
@@ -512,7 +531,8 @@ export default function Prototype(){
   {panel&&uiVisible&&<section style={{position:'absolute',top:55,right:12,bottom:75,width:'min(350px,calc(100vw - 24px))',overflowY:'auto',background:'#fffdf6f5',border:'1px solid #d4dcd5',borderRadius:20,padding:16,boxShadow:'0 8px 40px #2442',fontSize:13,zIndex:5}}>
    <div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}><h2 style={{margin:'0 0 10px',fontSize:17}}>Atelier pictural</h2><button style={{...buttonStyle,padding:'5px 10px'}} onClick={()=>setPanel(false)} aria-label='Fermer les réglages'>✕</button></div>
    <p>Jouez. La matière interprète vos gestes, sans réglage esthétique.</p><p style={{fontSize:11,opacity:.75}}>{midiStatus}</p><p style={{fontSize:12,fontWeight:600}} aria-live='polite'>{midiDiagnostic}</p>
-   <button style={buttonStyle} onClick={connectMidi}>Connecter le piano MIDI</button>
+   <button style={buttonStyle} disabled={midiConnecting} onClick={connectMidi}>{midiConnecting?'Connexion MIDI…':midiError?'Réessayer la connexion MIDI':'Connecter le piano MIDI'}</button>
+   {midiError&&<p role='alert' style={{fontSize:12,lineHeight:1.5,color:'#9a433a',padding:'9px 11px',background:'#fff2e9',borderRadius:10}}>{midiError}</p>}
    {midiInputs.length>0&&<label style={{display:'block',marginTop:10}}>Entrée MIDI<select style={{width:'100%'}} value={midiInput} onChange={e=>bindMidi(midiAccessRef.current!,e.target.value)}><option value=''>Toutes les entrées (recommandé)</option>{midiInputs.map(d=><option key={d.id} value={d.id}>{d.name}</option>)}</select></label>}
    {midiOutputs.length>0&&<label style={{display:'block',marginTop:10}}>Sortie Yamaha<select style={{width:'100%'}} value={midiOutput} onChange={e=>setMidiOutput(e.target.value)}>{midiOutputs.map(d=><option key={d.id} value={d.id}>{d.name}</option>)}</select></label>}
    <details><summary style={{cursor:'pointer',marginTop:14,fontWeight:600}}>Sessions MIDI (facultatif)</summary><h3>Enregistrer une improvisation</h3>
