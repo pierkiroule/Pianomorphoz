@@ -1,4 +1,7 @@
 import {useEffect,useRef,useState} from 'react';
+import {MidiRecorder} from './coaster/midi';
+import type {MidiSession} from './coaster/midi';
+import {loadSessions,saveSession,deleteSession} from './coaster/storage';
 
 const STATES=[
  {name:'Do majeur · floraison',feed:.0367,kill:.0649,flow:.24},
@@ -137,28 +140,70 @@ export default function Prototype(){
  const [playing,setPlaying]=useState(true),[step,setStep]=useState(0),[fps,setFps]=useState(0);
  const [midiStatus,setMidiStatus]=useState('Démo automatique'),[recording,setRecording]=useState(false),[recorded,setRecorded]=useState('');
  const [devices,setDevices]=useState<MediaDeviceInfo[]>([]),[deviceId,setDeviceId]=useState(''),[recordStatus,setRecordStatus]=useState('');
+ const [panel,setPanel]=useState(false),[sessions,setSessions]=useState<MidiSession[]>([]),[selected,setSelected]=useState(''),[taking,setTaking]=useState(false),[replaying,setReplaying]=useState(false),[midiInputs,setMidiInputs]=useState<{id:string;name:string}[]>([]),[midiOutputs,setMidiOutputs]=useState<{id:string;name:string}[]>([]),[midiInput,setMidiInput]=useState(''),[midiOutput,setMidiOutput]=useState('');
+ const midiRecorder=useRef(new MidiRecorder()),playbackTimers=useRef<number[]>([]),replayRef=useRef(false),recordingRef=useRef(false);
  const canvasRef=useRef<HTMLCanvasElement>(null);
  const musicRef=useRef({notes:new Map<number,number>(),pedal:false,last:0,connected:false});
  const midiAccessRef=useRef<MIDIAccess|null>(null),recorderRef=useRef<MediaRecorder|null>(null),streamRef=useRef<MediaStream|null>(null);
  useEffect(()=>()=>{if(recorded)URL.revokeObjectURL(recorded);},[recorded]);
- useEffect(()=>()=>{midiAccessRef.current?.inputs.forEach(input=>{input.onmidimessage=null;});if(recorderRef.current?.state==='recording')recorderRef.current.stop();streamRef.current?.getTracks().forEach(t=>t.stop());},[]);
+ useEffect(()=>{void loadSessions().then(setSessions).catch(e=>setRecordStatus(String(e)));},[]);
+ useEffect(()=>()=>{playbackTimers.current.forEach(clearTimeout);midiAccessRef.current?.inputs.forEach(input=>{input.onmidimessage=null;});if(recorderRef.current?.state==='recording')recorderRef.current.stop();streamRef.current?.getTracks().forEach(t=>t.stop());},[]);
+ function onMidi(data:number[],now=performance.now()){
+  if(recordingRef.current)midiRecorder.current.push(data,now);
+  const command=data[0]&240,n=data[1],v=data[2];
+  if(command===144&&v>0)musicRef.current.notes.set(n,v);
+  if(command===128||(command===144&&v===0))musicRef.current.notes.delete(n);
+  if(command===176&&n===64)musicRef.current.pedal=v>=64;
+  musicRef.current.last=now;
+ }
+ function bindMidi(access:MIDIAccess,id?:string){
+  const inputs=[...access.inputs.values()],outputs=[...access.outputs.values()];
+  const input=inputs.find(i=>i.id===id)||inputs[0];
+  access.inputs.forEach(i=>{i.onmidimessage=null;});
+  if(input)input.onmidimessage=e=>{if(e.data)onMidi(Array.from(e.data),e.timeStamp||performance.now());};
+  setMidiInputs(inputs.map(i=>({id:i.id,name:i.name||'MIDI IN'})));
+  setMidiOutputs(outputs.map(i=>({id:i.id,name:i.name||'MIDI OUT'})));
+  setMidiInput(input?.id||'');setMidiOutput(old=>outputs.some(o=>o.id===old)?old:outputs[0]?.id||'');
+  musicRef.current.connected=!!input;setMidiStatus(input?'MIDI : '+(input.name||'entrée active'):'Aucune entrée MIDI');
+ }
  async function connectMidi(){
   try{
    if(!navigator.requestMIDIAccess)throw Error('Web MIDI indisponible. Utiliser Chrome ou Edge.');
    const access=await navigator.requestMIDIAccess();midiAccessRef.current=access;
-   const bind=()=>{
-    let count=0;
-    access.inputs.forEach(input=>{count++;input.onmidimessage=(event)=>{
-     const data=event.data;if(!data)return;
-     const command=data[0]&240,n=data[1],v=data[2];
-     if(command===144&&v>0)musicRef.current.notes.set(n,v);
-     if(command===128||(command===144&&v===0))musicRef.current.notes.delete(n);
-     if(command===176&&n===64)musicRef.current.pedal=v>=64;
-     musicRef.current.last=performance.now();
-    };});
-    musicRef.current.connected=count>0;setMidiStatus(count?count+' entrée(s) MIDI active(s)':'Aucune entrée MIDI détectée');
-   };bind();access.onstatechange=bind;
+   bindMidi(access);access.onstatechange=()=>bindMidi(access);
   }catch(error){setMidiStatus(String(error));}
+ }
+ function stopPlayback(){
+  playbackTimers.current.forEach(clearTimeout);playbackTimers.current=[];replayRef.current=false;setReplaying(false);
+  musicRef.current.notes.clear();
+  const output=midiAccessRef.current?.outputs.get(midiOutput);
+  if(output)for(let ch=0;ch<16;ch++){output.send([0xb0|ch,64,0]);output.send([0xb0|ch,123,0]);}
+ }
+ function playSession(){
+  const session=sessions.find(s=>s.id===selected);if(!session)return;
+  stopPlayback();replayRef.current=true;setReplaying(true);musicRef.current.connected=true;
+  const output=midiAccessRef.current?.outputs.get(midiOutput);
+  for(const event of session.events){
+   playbackTimers.current.push(window.setTimeout(()=>{
+    if(!replayRef.current)return;
+    onMidi(event.data);
+    if(output&&event.data[0]<240)output.send(event.data);
+   },Math.max(0,event.t)));
+  }
+  playbackTimers.current.push(window.setTimeout(()=>stopPlayback(),session.duration+300));
+ }
+ async function toggleTake(){
+  if(recordingRef.current){recordingRef.current=false;setTaking(false);const session=midiRecorder.current.stop();
+   if(session.events.length){try{await saveSession(session);setSessions(await loadSessions());setSelected(session.id);setRecordStatus('Prise MIDI sauvegardée en local');}catch(e){setRecordStatus(String(e));}}
+   else setRecordStatus('Aucune note MIDI enregistrée');return;
+  }
+  if(!musicRef.current.connected){setRecordStatus('Connecter une entrée MIDI avant la prise');return;}
+  stopPlayback();midiRecorder.current.start();recordingRef.current=true;setTaking(true);setRecordStatus('Prise MIDI en cours');
+ }
+ async function removeSession(){if(!selected)return;try{await deleteSession(selected);setSessions(await loadSessions());setSelected('');}catch(e){setRecordStatus(String(e));}}
+ function exportSession(){const session=sessions.find(s=>s.id===selected);if(!session)return;
+  const url=URL.createObjectURL(new Blob([JSON.stringify(session,null,2)],{type:'application/json'}));
+  const a=document.createElement('a');a.href=url;a.download='pianomorphoz-session.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
  }
  async function selectAudio(){
   try{
@@ -201,7 +246,24 @@ export default function Prototype(){
    <div style={{background:'#fffdf6ed',borderRadius:15,padding:'10px 13px'}}><div style={{fontSize:10,opacity:.6}}>{musicRef.current.connected?'HARMONIE MIDI':'HARMONIE SIMULÉE'}</div><strong style={{fontSize:13}}>{STATES[step].name}</strong></div>
    <div style={{display:'flex',gap:6,flexWrap:'wrap',justifyContent:'flex-end'}}><button style={buttonStyle} onClick={connectMidi}>MIDI</button><button style={buttonStyle} onClick={selectAudio}>Audio</button><button style={buttonStyle} onClick={toggleRecording}>{recording?'■ Stop vidéo':'● Vidéo'}</button><button style={buttonStyle} onClick={()=>setPlaying(v=>!v)}>{playing?'Ⅱ':'▶'}</button></div>
   </div>
-  <div style={{position:'absolute',top:70,left:14,fontSize:11,background:'#fffdf6d9',padding:'5px 9px',borderRadius:10}}>{midiStatus} · <a href='?studio=1' style={{color:'#284044'}}>Studio historique</a></div>
+  <div style={{position:'absolute',top:70,left:14,fontSize:11,background:'#fffdf6d9',padding:'5px 9px',borderRadius:10}}>{midiStatus} · <button onClick={()=>setPanel(v=>!v)} style={{...buttonStyle,padding:'4px 9px'}}> {panel?'Fermer':'Studio'} </button></div>
+  {panel&&<section style={{position:'absolute',top:105,right:12,bottom:105,width:'min(350px,calc(100vw - 24px))',overflowY:'auto',background:'#fffdf6f5',border:'1px solid #d4dcd5',borderRadius:20,padding:16,boxShadow:'0 8px 40px #2442',fontSize:13,zIndex:5}}>
+   <h2 style={{margin:'0 0 10px',fontSize:17}}>Studio · matière vivante</h2>
+   <p>Le piano pilote directement l'encre. Les prises MIDI sont conservées sur cet appareil.</p>
+   <button style={buttonStyle} onClick={connectMidi}>Connecter le piano MIDI</button>
+   {midiInputs.length>0&&<label style={{display:'block',marginTop:10}}>Entrée MIDI<select style={{width:'100%'}} value={midiInput} onChange={e=>bindMidi(midiAccessRef.current!,e.target.value)}>{midiInputs.map(d=><option key={d.id} value={d.id}>{d.name}</option>)}</select></label>}
+   {midiOutputs.length>0&&<label style={{display:'block',marginTop:10}}>Sortie Yamaha<select style={{width:'100%'}} value={midiOutput} onChange={e=>setMidiOutput(e.target.value)}>{midiOutputs.map(d=><option key={d.id} value={d.id}>{d.name}</option>)}</select></label>}
+   <h3>Enregistrer une improvisation</h3>
+   <button style={buttonStyle} onClick={()=>void toggleTake()}>{taking?'■ Terminer la prise MIDI':'● Enregistrer MIDI'}</button>
+   <label style={{display:'block',marginTop:12}}>Sessions enregistrées<select style={{width:'100%'}} value={selected} onChange={e=>setSelected(e.target.value)}><option value=''>Choisir une session</option>{sessions.map(s=><option key={s.id} value={s.id}>{s.name} ({Math.round(s.duration/1000)} s)</option>)}</select></label>
+   <div style={{display:'flex',flexWrap:'wrap',gap:6,marginTop:8}}><button style={buttonStyle} disabled={!selected||replaying} onClick={playSession}>▶ Rejouer</button><button style={buttonStyle} disabled={!replaying} onClick={stopPlayback}>■ Stop</button><button style={buttonStyle} disabled={!selected} onClick={exportSession}>JSON</button><button style={buttonStyle} disabled={!selected} onClick={()=>void removeSession()}>Supprimer</button></div>
+   <h3>Production audiovisuelle</h3>
+   <p>Sélectionner l'entrée audio USB ou le micro. Puis utiliser « Vidéo » pour enregistrer l'image et le son ensemble.</p>
+   <button style={buttonStyle} onClick={selectAudio}>Choisir la source audio</button>
+   {devices.length>0&&<select style={{display:'block',width:'100%',marginTop:8}} value={deviceId} onChange={e=>setDeviceId(e.target.value)}><option value=''>Microphone par défaut</option>{devices.map(d=><option key={d.deviceId} value={d.deviceId}>{d.label||'Entrée audio'}</option>)}</select>}
+   <p style={{fontSize:11,opacity:.75}}>{recordStatus}</p>
+   <p style={{fontSize:11}}>Pour le mastering WAV et le montage avancé : <a href='?studio=1'>outils historiques</a>.</p>
+  </section>}
   {devices.length>0&&<div style={{position:'absolute',top:100,left:14,background:'#fffdf6ed',padding:8,borderRadius:12,maxWidth:'85vw'}}><label style={{fontSize:11}}>Source audio <select value={deviceId} onChange={e=>setDeviceId(e.target.value)}><option value=''>Microphone par défaut</option>{devices.map(d=><option key={d.deviceId} value={d.deviceId}>{d.label||'Entrée audio'}</option>)}</select></label></div>}
   {recordStatus&&<div style={{position:'absolute',top:150,left:14,fontSize:11,background:'#fffdf6ed',padding:'5px 9px',borderRadius:9,maxWidth:'80vw'}}>{recordStatus}</div>}
   {recorded&&<a href={recorded} download={'aquarelle-vivante-'+Date.now()+'.webm'} style={{position:'absolute',top:185,left:14,...buttonStyle,textDecoration:'none',fontSize:12}}>Télécharger la vidéo WebM</a>}
