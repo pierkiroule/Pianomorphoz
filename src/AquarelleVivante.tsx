@@ -1,5 +1,4 @@
 import {useEffect,useRef,useState} from 'react';
-import * as THREE from 'three';
 import {MidiRecorder} from './coaster/midi';
 import type {MidiSession} from './coaster/midi';
 import {loadSessions,saveSession,deleteSession} from './coaster/storage';
@@ -119,61 +118,10 @@ function PixelField({playing,immersive,onStats,canvasRef,musicRef,paletteRef,det
     wet[i]=Math.min(1,wet[i]+w*.12);
    }
   };
-  // Lightweight Three.js veil landscape. Rendered offscreen, then composited into
-  // the same capture canvas so PNG and MediaRecorder include the optical scene.
-  let renderer:THREE.WebGLRenderer|null=null;
-  let scene:THREE.Scene|null=null,camera:THREE.PerspectiveCamera|null=null;
-  let veilTexture:THREE.CanvasTexture|null=null;
-  const veils:THREE.Mesh<THREE.PlaneGeometry,THREE.MeshBasicMaterial>[]=[];
-  let cosmos:THREE.InstancedMesh<THREE.IcosahedronGeometry,THREE.MeshPhongMaterial>|null=null;
-  const cosmosCount=440;
-  const cosmosPositions=new Float32Array(cosmosCount*3);
-  const cosmosSizes=new Float32Array(cosmosCount);
-  const cosmosDummy=new THREE.Object3D();
-  let cosmosCursor=0,flight=0,flightMix=0;
-  const corridorLength=36;
-  const flightSpeed=2.1;
-  const fract=(v:number)=>v-Math.floor(v);
-  const scatter=(i:number,offset=0)=>{
-   const angle=fract(i*.61803398875)*Math.PI*2;
-   const radial=Math.sqrt(fract(i*.754877666))*(1.4+fract(i*.193)*2.2);
-   const k=i*3;
-   cosmosPositions[k]=Math.cos(angle)*radial;
-   cosmosPositions[k+1]=Math.sin(angle)*radial;
-   cosmosPositions[k+2]=-1-fract(i*.56984029)*corridorLength-offset;
-   cosmosSizes[i]=.035+fract(i*.371)*.15;
-  };
-  for(let i=0;i<cosmosCount;i++)scatter(i);
-  const emitCosmos=(event:Gesture)=>{
-   const power=event.velocity/127,count=Math.min(9,2+Math.floor(power*7));
-   for(let j=0;j<count;j++){
-    const i=cosmosCursor++%cosmosCount,k=i*3;
-    const angle=event.note*2.399963+j*2.1;
-    const radius=.2+Math.sqrt(j/count)*(.65+power*.65);
-    cosmosPositions[k]=Math.cos(angle)*radius;cosmosPositions[k+1]=Math.sin(angle)*radius;
-    cosmosPositions[k+2]=-flight-4.5-power*3-j*.13;
-    cosmosSizes[i]=.035+power*.16*(j===0?1:.55);
-   }
-  };
-  try{
-   renderer=new THREE.WebGLRenderer({alpha:false,antialias:false,powerPreference:'low-power',preserveDrawingBuffer:true});
-   renderer.setPixelRatio(1);
-   scene=new THREE.Scene();scene.background=new THREE.Color('#faf8f1');scene.fog=new THREE.FogExp2('#faf8f1',.026);
-   camera=new THREE.PerspectiveCamera(37,1,.1,30);camera.position.set(0,0,4.6);
-   const ambient=new THREE.AmbientLight('#ffffff',1.6);scene.add(ambient);
-   const light=new THREE.PointLight('#d9eaf2',16,20);light.position.set(-2,2,2);scene.add(light);
-   const geometry=new THREE.IcosahedronGeometry(1,2);
-   const material=new THREE.MeshPhongMaterial({color:'#a7c6cf',transparent:true,opacity:.72,shininess:115,specular:'#ffffff',depthWrite:false});
-   cosmos=new THREE.InstancedMesh(geometry,material,cosmosCount);cosmos.frustumCulled=false;scene.add(cosmos);
-   veilTexture=new THREE.CanvasTexture(veilCanvas);veilTexture.colorSpace=THREE.SRGBColorSpace;
-   for(let k=0;k<3;k++){
-    const geometry=new THREE.PlaneGeometry(3.05,3.05,12,12);
-    const material=new THREE.MeshBasicMaterial({map:veilTexture,transparent:true,opacity:k===0?.9:k===1?.29:.16,depthWrite:false,side:THREE.DoubleSide});
-    const mesh=new THREE.Mesh(geometry,material);mesh.position.z=-k*.68;
-    mesh.rotation.z=(k-1)*.14;mesh.rotation.y=(k-1)*.13;
-    scene.add(mesh);veils.push(mesh);
-   }
-  }catch{renderer?.dispose();renderer=null;}
+  // Pure Canvas 2.5D: no WebGL, geometry, particle spheres or 3D render pass.
+  // Four translucent pictorial veils are projected at different depths.
+  const veilLayers=4;
+  let flight=0,flightMix=0;
   const resize=()=>{const r=target.getBoundingClientRect(),d=Math.min(window.devicePixelRatio||1,1.5);target.width=Math.max(1,Math.floor(r.width*d));target.height=Math.max(1,Math.floor(r.height*d));ctx.setTransform(d,0,0,d,0,0);ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality='high';};
   resize();window.addEventListener('resize',resize);
   const draw=(now:number)=>{
@@ -211,7 +159,6 @@ function PixelField({playing,immersive,onStats,canvasRef,musicRef,paletteRef,det
    livingPhase+=dt*(.1+living.autonomy*.8);
    if(playingRef.current){
     for(const event of impulses){
-     emitCosmos(event);
      const index=Math.max(0,Math.min(87,event.note-21));
      speed[index]+=.13+event.velocity/127*.72;
      const theta=index*2.39996323,radius=.12+.29*index/87;
@@ -319,68 +266,44 @@ function PixelField({playing,immersive,onStats,canvasRef,musicRef,paletteRef,det
    const width=target.clientWidth,height=target.clientHeight;
    ctx.fillStyle='#faf8f1';ctx.fillRect(0,0,width,height);
    const size=Math.min(width,height)*.98;
-   if(renderer&&scene&&camera&&veilTexture&&frame%2===0){
-    const scale=Math.min(1,Math.max(.4,Math.min(width,height)/700));
-    const renderWidth=Math.max(1,Math.floor(width*scale)),renderHeight=Math.max(1,Math.floor(height*scale));
-    if(renderer.domElement.width!==renderWidth||renderer.domElement.height!==renderHeight)renderer.setSize(renderWidth,renderHeight,false);
-    camera.aspect=width/Math.max(1,height);camera.updateProjectionMatrix();
-    // FPV: true forward travel through the droplet field, never a static zoom.
-    const targetMix=immersiveRef.current?1:0;
-    flightMix+=(targetMix-flightMix)*Math.min(1,dt*1.8);
-    if(playingRef.current)flight+=dt*(flightSpeed+perception.energy*2.8)*flightMix;
-    const pathX=Math.sin(flight*.29)*.58+Math.sin(flight*.11)*.22;
-    const pathY=Math.cos(flight*.23)*.42;
-    const orbitX=Math.sin(elapsed*.045)*.22,orbitY=Math.cos(elapsed*.034)*.16;
-    camera.fov=37+flightMix*33;camera.updateProjectionMatrix();
-    camera.position.x=orbitX*(1-flightMix)+pathX*flightMix;
-    camera.position.y=orbitY*(1-flightMix)+pathY*flightMix;
-    camera.position.z=(4.6+Math.sin(elapsed*.028)*.25)*(1-flightMix)+flightMix*(-flight);
-    camera.lookAt(pathX*flightMix*.35+Math.sin(flight*.37)*flightMix*.28,pathY*flightMix*.35,-(flight+7)*flightMix-.45*(1-flightMix));
-    camera.rotation.z+=flightMix*Math.sin(flight*.2)*.035;
-    if(cosmos){
-     for(let i=0;i<cosmosCount;i++){
-      const k=i*3;
-      // The camera crosses actual world-space drops. Recycle those left behind,
-      // ahead of the camera; no fresh pigment or note-triggered drops in silence.
-      if(cosmosPositions[k+2]>camera.position.z+1.2){
-       cosmosPositions[k+2]-=corridorLength;
-      }
-      const relativeDepth=camera.position.z-cosmosPositions[k+2];
-      cosmosDummy.position.set(cosmosPositions[k],cosmosPositions[k+1],cosmosPositions[k+2]);
-      const scale=cosmosSizes[i]*(1+Math.max(0,1-relativeDepth/6)*.38);
-      cosmosDummy.scale.set(scale,scale*(.65+Math.sin(i*1.7)*.3),scale);
-      cosmosDummy.updateMatrix();cosmos.setMatrixAt(i,cosmosDummy.matrix);
-     }
-     cosmos.instanceMatrix.needsUpdate=true;
-     cosmos.visible=flightMix>.015;
-     cosmos.material.opacity=.72*flightMix;
+   // Camera travels *through* a corridor of painted surfaces. Each layer
+   // grows, slides past the observer, then recedes into the distance.
+   // All material comes from the same living 2D pigment field.
+   const targetMix=immersiveRef.current?1:0;
+   flightMix+=(targetMix-flightMix)*Math.min(1,dt*2.1);
+   if(playingRef.current)flight+=dt*(.28+perception.energy*.4)*flightMix;
+   if(flightMix>.002){
+     const turnX=Math.sin(flight*.49)*width*.075;
+    const turnY=Math.cos(flight*.37)*height*.065;
+    const phase=flight%veilLayers;
+    const base=Math.min(width,height);
+    // Far layers are faint; the near layer has the most detail and parallax.
+    for(let k=veilLayers-1;k>=0;k--){
+     const depth=(k+veilLayers-phase)%veilLayers;
+     const near=1-depth/veilLayers;
+     const zoom=.48+near*1.55;
+     const span=base*zoom;
+     const x=width*.5-span*.5+turnX*(.3+near*.7)+Math.sin(flight*.23+k*2.1)*base*.11*near;
+     const y=height*.5-span*.5+turnY*(.3+near*.7)+Math.cos(flight*.19+k*1.7)*base*.08*near;
+     ctx.save();
+     ctx.globalAlpha=flightMix*(.11+near*.64);
+     ctx.translate(x+span*.5,y+span*.5);
+     ctx.rotate(Math.sin(flight*.13+k)*.045);
+     ctx.drawImage(veilCanvas,-span*.5,-span*.5,span,span);
+     ctx.restore();
     }
-    veils.forEach((veil,k)=>{
-     veil.rotation.z=(k-1)*.14+Math.sin(elapsed*.07+k)*.065;
-     veil.rotation.y=(k-1)*.13+Math.sin(elapsed*.11+k)*.09;
-     veil.position.x=Math.sin(elapsed*.09+k*2.1)*.12;
-     veil.position.z=-k*.68-flightMix*(flight+12+k*2);
-     veil.material.opacity=(k===0?.9:k===1?.29:.16)*(1-flightMix*.74);
-     const pos=veil.geometry.attributes.position as THREE.BufferAttribute;
-     for(let j=0;j<pos.count;j++){
-      const x=pos.getX(j),y=pos.getY(j);
-      pos.setZ(j,Math.sin(x*2.3+elapsed*.21+k)*Math.cos(y*2.5-elapsed*.16)*(.045+perception.energy*.075));
-     }
-     pos.needsUpdate=true;
-    });
-    veilTexture.needsUpdate=true;renderer.render(scene,camera);
+    // The 2D painting remains faintly visible behind the travelling veils.
+    ctx.save();ctx.globalAlpha=flightMix*.16;
+    ctx.drawImage(buffer,(width-size)/2,(height-size)/2,size,size);ctx.restore();
    }
-   if(renderer){
-    ctx.drawImage(renderer.domElement,0,0,width,height);
-    ctx.save();ctx.globalAlpha=.1;ctx.filter='blur(11px)';
-    ctx.drawImage(renderer.domElement,-width*.015,-height*.015,width*1.03,height*1.03);
-    ctx.restore();
-   }else if(!renderer){
+   if(flightMix<.999){
+    ctx.save();ctx.globalAlpha=1-flightMix;
     ctx.drawImage(buffer,(width-size)/2,(height-size)/2,size,size);
+    ctx.restore();
    }
    // Fine, deterministic pigment fibers at display resolution, independent of simulation pixels.
    ctx.save();ctx.globalCompositeOperation='multiply';
-   for(let j=0;j<Math.round(80+detailRef.current*140);j++){
+   for(let j=0;j<(flightMix>.1?36:Math.round(80+detailRef.current*140));j++){
     const seed=j*2.399963229728653,rr=Math.sqrt((j+.5)/Math.round(80+detailRef.current*140))*size*.43;
     const x=width/2+Math.cos(seed)*rr,y=height/2+Math.sin(seed)*rr;
     const gx=Math.floor((x-(width-size)/2)/size*N),gy=Math.floor((y-(height-size)/2)/size*N);
@@ -390,14 +313,14 @@ function PixelField({playing,immersive,onStats,canvasRef,musicRef,paletteRef,det
     ctx.strokeStyle=j%9===0?'rgba(143,99,55,.12)':`rgba(${palette.ink[0]},${palette.ink[1]},${palette.ink[2]},.14)`;ctx.lineWidth=.35;ctx.stroke();
    }
    ctx.restore();
-   // Optical diffusion: a soft large-scale veil, then the sharp microstructure.
-   ctx.save();ctx.globalAlpha=.16;ctx.filter='blur(12px)';ctx.drawImage(buffer,(width-size)/2,(height-size)/2,size,size);ctx.restore();
+   // One inexpensive soft optical pass, disabled in immersive flight.
+   if(flightMix<.05&&fps>=25){ctx.save();ctx.globalAlpha=.10;ctx.filter='blur(8px)';ctx.drawImage(buffer,(width-size)/2,(height-size)/2,size,size);ctx.restore();}
    frame++;count++;
    if(now-lastFps>1000){fps=Math.round(count*1000/(now-lastFps));count=0;lastFps=now;}
    if(now-lastStats>400){lastStats=now;statsRef.current(step,fps);}
   };
   raf=requestAnimationFrame(draw);
-  return()=>{cancelAnimationFrame(raf);window.removeEventListener('resize',resize);veils.forEach(v=>{v.geometry.dispose();v.material.dispose();});cosmos?.geometry.dispose();cosmos?.material.dispose();veilTexture?.dispose();renderer?.dispose();};
+  return()=>{cancelAnimationFrame(raf);window.removeEventListener('resize',resize);};
  },[]);
  return <canvas ref={canvas} style={{position:'absolute',inset:0,width:'100%',height:'100%',display:'block'}}/>;
 }
