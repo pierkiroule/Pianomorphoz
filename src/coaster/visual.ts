@@ -6,7 +6,7 @@ export class FiberCoaster {
  private renderer:THREE.WebGLRenderer;private fibers:THREE.Line[]=[];private materials:THREE.LineBasicMaterial[]=[];
  private activity=new Float32Array(88);private sustain=new Uint8Array(16);private active=new Map<string,number>();
  private session:MidiSession|null=null;private index=0;private time=0;private last=0;private raf=0;private running=true;private playing=false;
- private speed=1;private duration=0;private origin=0;onTime:(ms:number,playing:boolean)=>void=()=>{};
+ private speed=1;private duration=0;private origin=0;private palette=0;private motion=1;private liveStart=performance.now();onTime:(ms:number,playing:boolean)=>void=()=>{};
  constructor(private canvas:HTMLCanvasElement){
   this.renderer=new THREE.WebGLRenderer({canvas,antialias:true,powerPreference:'high-performance'});
   this.renderer.setClearColor('#fffefa');
@@ -33,7 +33,8 @@ export class FiberCoaster {
   if(cmd===0x80||(cmd===0x90&&v===0)){this.active.delete(key);}
   if(cmd===0xb0&&n===64)this.sustain[ch]=v>=64?1:0;
  }
- setSession(session:MidiSession|null){this.session=session;this.duration=session?.duration||0;this.pause();this.seek(0);}
+ setSession(session:MidiSession|null){this.session=session;this.duration=session?.duration||0;this.pause();this.seek(0);this.liveStart=performance.now();}
+ setStyle(palette:number,motion:number){this.palette=palette;this.motion=motion;}
  seek(ms:number){
   this.time=Math.max(0,Math.min(ms,this.duration));this.index=0;this.origin=performance.now()-this.time;this.activity.fill(0);this.active.clear();this.sustain.fill(0);
   if(this.session){while(this.index<this.session.events.length&&this.session.events[this.index].t<=this.time){this.note(this.session.events[this.index].data);this.index++;}}
@@ -48,11 +49,12 @@ export class FiberCoaster {
    const held=[...this.active].some(([k])=>Number(k.split(':')[1])===i+21);
    const a=this.activity[i];this.activity[i]=held?Math.max(a,.28):Math.max(0,a-dt*.22);
    this.materials[i].opacity=.075+this.activity[i]*.82;
-   const color=new THREE.Color().setHSL(.53+i/88*.27,.25+this.activity[i]*.45,.74-this.activity[i]*.22);
+   const base=[.53,.03,.32,.70][this.palette]??.53;
+   const color=new THREE.Color().setHSL((base+i/88*.20)%1,.25+this.activity[i]*.45,.74-this.activity[i]*.22);
    this.materials[i].color.copy(color);
   }
-  const t=this.time/1000;
-  this.camera.position.set(Math.sin(t*.14)*.8,Math.cos(t*.12)*.45,2-Math.min(t*this.speed*1.3,75));
+  const t=this.session?this.time/1000:(now-this.liveStart)/1000;
+  this.camera.position.set(Math.sin(t*.14)*.8*this.motion,Math.cos(t*.12)*.45*this.motion,2-Math.min(t*this.speed*1.3*this.motion,75));
   const target=new THREE.Vector3(Math.sin((t+2)*.14)*.8,Math.cos((t+2)*.12)*.45,this.camera.position.z-6);
   this.camera.lookAt(target);
   this.renderer.render(this.scene,this.camera);
