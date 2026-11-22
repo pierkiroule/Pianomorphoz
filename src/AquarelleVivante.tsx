@@ -63,17 +63,8 @@ function PixelField({playing,immersive,onStats,canvasRef,musicRef,paletteRef,det
   const veilContext=veilCanvas.getContext('2d');
   const veilImage=veilContext?.createImageData(N,N);
   let a=new Float32Array(N*N),b=new Float32Array(N*N),nextA=new Float32Array(N*N),nextB=new Float32Array(N*N);
-  const seed=()=>{
-   // Sparse elongated ink washes, no central disk, satellites or circular bubbles.
-   for(let y=0;y<N;y++)for(let x=0;x<N;x++){
-    const i=y*N+x,xx=x/N-.5,yy=y/N-.5;
-    a[i]=1;b[i]=0;
-    const ribbon=Math.sin(xx*8.1+Math.sin(yy*4.2)*1.8)*.07+Math.sin(yy*5.3+xx*2.8)*.035;
-    const distance=Math.abs(yy-xx*.34-ribbon);
-    const envelope=Math.max(0,1-Math.abs(xx)*1.6);
-    if(distance<.018*envelope&&xx>-.38&&xx<.36)b[i]=.28*(1-distance/(.018*envelope+.0001));
-   }
-  };seed();
+  // Blank paper at startup: no artificial pigment before the first note.
+  a.fill(1);
   let frame=0,elapsed=0,raf=0,last=performance.now(),fps=0,count=0,lastFps=last,lastStats=0;
   const pigment=new Float32Array(N*N),membrane=new Float32Array(N*N),wet=new Float32Array(N*N);
   const history=new Float32Array(N*N),crystal=new Float32Array(N*N);
@@ -118,14 +109,25 @@ function PixelField({playing,immersive,onStats,canvasRef,musicRef,paletteRef,det
   // Four translucent pictorial veils are projected at different depths.
   const veilLayers=4;
   let flight=0,flightMix=0;
+  let idlePainted=false;
   const resize=()=>{const r=target.getBoundingClientRect(),d=Math.min(window.devicePixelRatio||1,1.5);target.width=Math.max(1,Math.floor(r.width*d));target.height=Math.max(1,Math.floor(r.height*d));ctx.setTransform(d,0,0,d,0,0);ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality='high';};
   resize();window.addEventListener('resize',resize);
   const draw=(now:number)=>{
    raf=requestAnimationFrame(draw);
    const dt=Math.min(.05,(now-last)/1000);last=now;
-   if(playingRef.current)elapsed+=dt;
+   // Musical time is frozen during silence, including the FPV camera.
+   if(playingRef.current&&(musicRef.current.notes.size>0||musicRef.current.audioEnergy>.065||musicRef.current.impulses.length>0))elapsed+=dt;
    const active=[...musicRef.current.notes.entries()];
    const impulses=playingRef.current?musicRef.current.impulses.splice(0,48):[];
+   const audioActive=musicRef.current.audioEnergy>.065;
+   const sounding=playingRef.current&&(active.length>0||audioActive||impulses.length>0);
+   // Never animate without an input. Paint one still frame when sound ends,
+   // then keep the exact pixels untouched until the next attack.
+   if(!sounding){
+    if(idlePainted)return;
+    idlePainted=true;
+   }else idlePainted=false;
+
    const perception=grammar.observe(impulses,now,active.length,musicRef.current.audioEnergy);
    // Energy is supplied by actual gestures/audio, never by a demo timer.
    const input=Math.min(1,impulses.reduce((s,e)=>s+e.velocity/127,0)*.27+musicRef.current.audioEnergy*.48);
@@ -153,7 +155,7 @@ function PixelField({playing,immersive,onStats,canvasRef,musicRef,paletteRef,det
    const drive=clamp((.36+perception.novelty*.22)*( .35+activity*.5+reservoir*.35));
    const currentFilter=perception.density>.6?1:perception.register>.65?3:perception.novelty>.6?2:4;
    livingPhase+=dt*(.1+living.autonomy*.8);
-   if(playingRef.current){
+   if(sounding){
     for(const event of impulses){
      const index=Math.max(0,Math.min(87,event.note-21));
      speed[index]+=.13+event.velocity/127*.72;
@@ -257,8 +259,8 @@ function PixelField({playing,immersive,onStats,canvasRef,musicRef,paletteRef,det
    // grows, slides past the observer, then recedes into the distance.
    // All material comes from the same living 2D pigment field.
    const targetMix=immersiveRef.current?1:0;
-   flightMix+=(targetMix-flightMix)*Math.min(1,dt*2.1);
-   if(playingRef.current)flight+=dt*(.3+energy*1.45)*flightMix;
+   flightMix+=(targetMix-flightMix)*Math.min(1,(sounding?dt:1)*2.1);
+   if(sounding)flight+=dt*(.3+energy*1.45)*flightMix;
    if(flightMix>.002){
      const turnX=Math.sin(flight*.49)*width*.075;
     const turnY=Math.cos(flight*.37)*height*.065;
