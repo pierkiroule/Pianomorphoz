@@ -241,7 +241,7 @@ function PixelField({playing,immersive,onStats,canvasRef,musicRef,paletteRef,det
     const edge=Math.min(1,grad*3.8);
     const capillary=Math.pow(Math.max(0,Math.sin(x*.51+Math.sin(y*.027+t*.06)*4)*Math.sin(y*.43+Math.cos(x*.033-t*.05)*4)),13)*density;
     const dark=clamp(density*.71+membrane[i]*.45+edge*.24+capillary*.15+wet[i]*.12+material*.27+history[i]*living.memory*.18+crystal[i]*.08);
-    const gold=clamp((Math.sin(xx*8+yy*13+t*.09)+1)*.5*membrane[i]*.65+(currentFilter===5?material*.55:0));
+    const gold=clamp((Math.sin(xx*8+yy*13+t*.09)+1)*.5*membrane[i]*.65+material*.08);
     const grain=((x*73+y*131+x*y*17)%101)/101-.5;
     const bloom=Math.pow(Math.max(0,1-Math.abs(Math.sin((yy+xx*.3)*330+swirl*3+t*.15))),18)*density*.09;
     const p=i*4;
