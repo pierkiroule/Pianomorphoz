@@ -104,7 +104,6 @@ function PixelField({playing,immersive,onStats,canvasRef,musicRef,paletteRef,det
   const grammar=createMorphogenesis();
   let morphology=0,inkHue=0;
   const displacement=new Float32Array(88),speed=new Float32Array(88),nextSpeed=new Float32Array(88);
-  let lastDrop=0;
   const deposit=(nx:number,ny:number,force:number,shape=0)=>{
    const cx=Math.floor(nx*N),cy=Math.floor(ny*N),radius=1+Math.round(force*7);
    for(let dy=-radius;dy<=radius;dy++)for(let dx=-radius;dx<=radius;dx++){
@@ -129,7 +128,7 @@ function PixelField({playing,immersive,onStats,canvasRef,musicRef,paletteRef,det
    const impulses=playingRef.current?musicRef.current.impulses.splice(0,48):[];
    const perception=grammar.observe(impulses,now,active.length,musicRef.current.audioEnergy);
    // Energy is supplied by actual gestures/audio, never by a demo timer.
-   const input=Math.min(1,impulses.reduce((s,e)=>s+e.velocity/127,0)*.16+musicRef.current.audioEnergy*.3);
+   const input=Math.min(1,impulses.reduce((s,e)=>s+e.velocity/127,0)*.27+musicRef.current.audioEnergy*.48);
    reservoir=Math.min(1.6,Math.max(0,reservoir*Math.exp(-dt*.24)+input*.42));
    inkBudget=Math.min(1.2,Math.max(0,inkBudget*Math.exp(-dt*.11)+input*.3));
 
@@ -143,7 +142,7 @@ function PixelField({playing,immersive,onStats,canvasRef,musicRef,paletteRef,det
    const midiStep=major?0:minor?1:diminished?3:suspended?2:pitches.length?4:5;
    const step=musicRef.current.connected?midiStep:5;
    const state=STATES[step];
-   const energy=Math.min(1,perception.energy*.55+reservoir*.45);
+   const energy=Math.min(1,perception.energy*.45+reservoir*.35+musicRef.current.audioEnergy*.8);
    const register=pitches.length?pitches.reduce((s,n)=>s+n,0)/pitches.length:60;
    const registerBias=(register-60)/48;
    const palette=PALETTES[paletteRef.current]||PALETTES[0];
@@ -161,12 +160,11 @@ function PixelField({playing,immersive,onStats,canvasRef,musicRef,paletteRef,det
      const theta=index*2.39996323,radius=.12+.29*index/87;
      const power=event.velocity/127;
      const shape=power>.8?2:perception.density>.5?1:0;
-     const drops=Math.min(5,1+Math.floor(power*2+perception.density*2));
-     const spend=Math.min(inkBudget,.035+drops*.022);inkBudget-=spend;
-     for(let d=0;d<drops;d++){
-      const jitter=d===0?0:Math.sin(event.time*.07+d*2.4)*.018*power;
-      deposit(.5+Math.cos(theta)*radius+displacement[index]*.06+jitter,.5+Math.sin(theta)*radius+displacement[index]*.06-jitter,power*(d===0?1:.35)*(.65+spend*3),shape);
-     }
+     // One note-on / one detected audio onset = exactly one pigment drop.
+     const spend=Math.min(inkBudget,.06);inkBudget-=spend;
+     deposit(.5+Math.cos(theta)*radius+displacement[index]*.06,
+             .5+Math.sin(theta)*radius+displacement[index]*.06,
+             Math.max(.18,power)*(.9+spend*1.5),shape);
     }
     const damping=.966+living.memory*.022;
     for(let j=0;j<88;j++){
@@ -174,15 +172,7 @@ function PixelField({playing,immersive,onStats,canvasRef,musicRef,paletteRef,det
      nextSpeed[j]=(speed[j]+lap*(.085+living.autonomy*.065)-displacement[j]*.024)*damping;
     }
     for(let j=0;j<88;j++){speed[j]=nextSpeed[j];displacement[j]=Math.max(-1,Math.min(1,displacement[j]+speed[j]));}
-    // No autonomous drops: silence preserves the painting while the water settles.
-    if(elapsed-lastDrop>.12&&active.length&&perception.energy>.09){
-     lastDrop=elapsed;
-     const count=Math.min(5,Math.ceil(perception.density*3+perception.energy*2));
-     for(const [note,velocity] of active.slice(0,count)){
-      const j=Math.max(0,Math.min(87,note-21)),theta=j*2.39996323,radius=.12+.29*j/87;
-      deposit(.5+Math.cos(theta)*radius+displacement[j]*.06,.5+Math.sin(theta)*radius+displacement[j]*.06,velocity/127*.18,1);
-     }
-    }
+    // Held notes never spawn extra drops. Silence spawns none.
     // Advect pigment by backtracking trajectories in a divergence-free field.
     // The transport step is bounded and fades during silence.
     if(frame%2===0&&reservoir>.003){
@@ -268,7 +258,7 @@ function PixelField({playing,immersive,onStats,canvasRef,musicRef,paletteRef,det
    // All material comes from the same living 2D pigment field.
    const targetMix=immersiveRef.current?1:0;
    flightMix+=(targetMix-flightMix)*Math.min(1,dt*2.1);
-   if(playingRef.current)flight+=dt*(.28+perception.energy*.4)*flightMix;
+   if(playingRef.current)flight+=dt*(.3+energy*1.45)*flightMix;
    if(flightMix>.002){
      const turnX=Math.sin(flight*.49)*width*.075;
     const turnY=Math.cos(flight*.37)*height*.065;
@@ -278,12 +268,12 @@ function PixelField({playing,immersive,onStats,canvasRef,musicRef,paletteRef,det
     for(let k=veilLayers-1;k>=0;k--){
      const depth=(k+veilLayers-phase)%veilLayers;
      const near=1-depth/veilLayers;
-     const zoom=.85+near*2.5;
+     const zoom=(.85+near*2.5)*(1+energy*.075);
      const span=base*zoom;
      const x=width*.5-span*.5+turnX*(.3+near*.7)+Math.sin(flight*.23+k*2.1)*base*.11*near;
      const y=height*.5-span*.5+turnY*(.3+near*.7)+Math.cos(flight*.19+k*1.7)*base*.08*near;
      ctx.save();
-     ctx.globalAlpha=flightMix*(.11+near*.64);
+     ctx.globalAlpha=flightMix*(.11+near*.64)*(1+energy*.22);
      ctx.translate(x+span*.5,y+span*.5);
      ctx.rotate(Math.sin(flight*.13+k)*.045);
      ctx.scale(1.22,.86);
@@ -433,7 +423,7 @@ export default function Prototype(){
     const rms=Math.sqrt(sum/wave.length),energy=Math.min(1,Math.max(0,(rms-.012)*6));
     musicRef.current.audioEnergy+=(energy-musicRef.current.audioEnergy)*.23;
     const now=performance.now();
-    if(energy>.12&&energy>prev*1.26&&now-lastOnset>125){
+    if(energy>.065&&energy>prev*1.16&&energy-prev>.018&&now-lastOnset>170&&!musicRef.current.connected){
      let total=0,weighted=0;
      for(let i=2;i<spectrum.length;i++){const w=spectrum[i];total+=w;weighted+=i*w;}
      const centroid=total?weighted/total:50;
@@ -441,7 +431,7 @@ export default function Prototype(){
      musicRef.current.impulses.push({note,velocity:Math.round(Math.min(127,Math.max(25,energy*127))),time:now});
      lastOnset=now;
     }
-    prev=energy;
+    prev=prev*.55+energy*.45;
    },40);
    listenRef.current={stream,context,timer};setListening(true);setRecordStatus('Écoute active · aucun retour audio vers les haut-parleurs');
   }catch(error){setRecordStatus('Écoute audio : '+String(error));setListening(false);}
