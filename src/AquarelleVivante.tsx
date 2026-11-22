@@ -12,8 +12,9 @@ const STATES=[
  {name:'Silence · décantation',feed:.022,kill:.056,flow:.07}
 ];
 const N=240;
+const PALETTES=[{name:'Sépia botanique',paper:[250,248,242],ink:[38,58,60]},{name:'Bleu de Prusse',paper:[248,250,249],ink:[17,49,91]},{name:'Garance',paper:[252,248,245],ink:[110,35,57]},{name:'Forêt',paper:[248,250,245],ink:[34,75,57]},{name:'Noir sumi-e',paper:[251,250,247],ink:[23,25,29]}];
 const buttonStyle:React.CSSProperties={border:'1px solid #cbd4d0',background:'#fffdf6e8',borderRadius:20,padding:'10px 13px',color:'#284044',fontWeight:600};
-function PixelField({playing,onStats,canvasRef,musicRef}:{playing:boolean;onStats:(step:number,fps:number)=>void;canvasRef:React.RefObject<HTMLCanvasElement|null>;musicRef:React.RefObject<{notes:Map<number,number>;pedal:boolean;last:number;connected:boolean}>}){
+function PixelField({playing,onStats,canvasRef,musicRef,paletteRef,detailRef}:{playing:boolean;onStats:(step:number,fps:number)=>void;canvasRef:React.RefObject<HTMLCanvasElement|null>;musicRef:React.RefObject<{notes:Map<number,number>;pedal:boolean;last:number;connected:boolean}>;paletteRef:React.RefObject<number>;detailRef:React.RefObject<number>}){
  const canvas=canvasRef;
  const playingRef=useRef(playing);playingRef.current=playing;
  const statsRef=useRef(onStats);statsRef.current=onStats;
@@ -57,6 +58,9 @@ function PixelField({playing,onStats,canvasRef,musicRef}:{playing:boolean;onStat
    const step=musicRef.current.connected?midiStep:Math.floor(elapsed/7)%STATES.length;
    const state=STATES[step];
    const energy=musicRef.current.connected?Math.min(1,velocity+.12*active.length):.42;
+   const register=pitches.length?pitches.reduce((s,n)=>s+n,0)/pitches.length:60;
+   const registerBias=(register-60)/48;
+   const palette=PALETTES[paletteRef.current]||PALETTES[0];
    if(playingRef.current){
     for(let iteration=0;iteration<2;iteration++){
      for(let y=1;y<N-1;y++)for(let x=1;x<N-1;x++){
@@ -69,9 +73,9 @@ function PixelField({playing,onStats,canvasRef,musicRef}:{playing:boolean;onStat
      }
      [a,nextA]=[nextA,a];[b,nextB]=[nextB,b];
     }
-    if(frame%(musicRef.current.connected?Math.max(5,Math.round(22-energy*17)):16)===0){
+    if(frame%(musicRef.current.connected?Math.max(4,Math.round(24-energy*18)):16)===0){
      const theta=elapsed*.48,angle=musicRef.current.connected?(root/12*Math.PI*2+elapsed*.1):theta;
-     const px=Math.floor(N*(.5+.26*Math.cos(angle))),py=Math.floor(N*(.5+.26*Math.sin(angle*1.3)));
+     const px=Math.floor(N*(.5+registerBias*.10+.26*Math.cos(angle))),py=Math.floor(N*(.5-registerBias*.10+.26*Math.sin(angle*1.3)));
      for(let dy=-3;dy<=3;dy++)for(let dx=-3;dx<=3;dx++){
       const x=px+dx,y=py+dy;if(x>1&&x<N-2&&y>1&&y<N-2&&dx*dx+dy*dy<12)b[y*N+x]=.95;
      }
@@ -103,9 +107,9 @@ function PixelField({playing,onStats,canvasRef,musicRef}:{playing:boolean;onStat
     const grain=((x*73+y*131+x*y*17)%101)/101-.5;
     const bloom=Math.pow(Math.max(0,1-Math.abs(Math.sin((xx*xx+yy*yy)*330+swirl*3+t*.15))),18)*density*.09;
     const p=i*4;
-    pix[p]=Math.max(0,Math.min(255,250-dark*212+gold*42+bloom*36+grain*2));
-    pix[p+1]=Math.max(0,Math.min(255,248-dark*190+mist*7+gold*15+bloom*24+grain*2));
-    pix[p+2]=Math.max(0,Math.min(255,242-dark*169+mist*13-gold*19+grain*2));
+    pix[p]=Math.max(0,Math.min(255,palette.paper[0]*(1-dark)+palette.ink[0]*dark+gold*28+bloom*22+grain*2));
+    pix[p+1]=Math.max(0,Math.min(255,palette.paper[1]*(1-dark)+palette.ink[1]*dark+mist*7+gold*10+bloom*18+grain*2));
+    pix[p+2]=Math.max(0,Math.min(255,palette.paper[2]*(1-dark)+palette.ink[2]*dark+mist*13-gold*9+grain*2));
     pix[p+3]=255;
    }
    bc.putImageData(image,0,0);
@@ -115,14 +119,14 @@ function PixelField({playing,onStats,canvasRef,musicRef}:{playing:boolean;onStat
    ctx.drawImage(buffer,(width-size)/2,(height-size)/2,size,size);
    // Fine, deterministic pigment fibers at display resolution, independent of simulation pixels.
    ctx.save();ctx.globalCompositeOperation='multiply';
-   for(let j=0;j<220;j++){
-    const seed=j*2.399963229728653,rr=Math.sqrt((j+.5)/220)*size*.43;
+   for(let j=0;j<Math.round(80+detailRef.current*140);j++){
+    const seed=j*2.399963229728653,rr=Math.sqrt((j+.5)/Math.round(80+detailRef.current*140))*size*.43;
     const x=width/2+Math.cos(seed)*rr,y=height/2+Math.sin(seed)*rr;
     const gx=Math.floor((x-(width-size)/2)/size*N),gy=Math.floor((y-(height-size)/2)/size*N);
     if(gx<0||gx>=N||gy<0||gy>=N||b[gy*N+gx]<.06)continue;
     const len=2+Math.abs(Math.sin(j*9.3))*size*.025;
     ctx.beginPath();ctx.moveTo(x,y);ctx.bezierCurveTo(x+Math.cos(seed+elapsed*.07)*len*.3,y+Math.sin(seed)*len*.3,x+Math.cos(seed+elapsed*.07)*len*.7,y+Math.sin(seed+1)*len*.7,x+Math.cos(seed+elapsed*.07)*len,y+Math.sin(seed+1)*len);
-    ctx.strokeStyle=j%9===0?'rgba(143,99,55,.12)':'rgba(24,58,67,.12)';ctx.lineWidth=.35;ctx.stroke();
+    ctx.strokeStyle=j%9===0?'rgba(143,99,55,.12)':`rgba(${palette.ink[0]},${palette.ink[1]},${palette.ink[2]},.14)`;ctx.lineWidth=.35;ctx.stroke();
    }
    ctx.restore();
    // Optical diffusion: a soft large-scale veil, then the sharp microstructure.
@@ -138,6 +142,8 @@ function PixelField({playing,onStats,canvasRef,musicRef}:{playing:boolean;onStat
 }
 export default function Prototype(){
  const [playing,setPlaying]=useState(true),[step,setStep]=useState(0),[fps,setFps]=useState(0);
+ const [palette,setPalette]=useState(0),[detail,setDetail]=useState(1),[previewOpen,setPreviewOpen]=useState(false),[captureSeconds,setCaptureSeconds]=useState(0);
+ const paletteRef=useRef(0),detailRef=useRef(1),recordStart=useRef(0),captureClock=useRef<number|null>(null);
  const [midiStatus,setMidiStatus]=useState('Démo automatique'),[recording,setRecording]=useState(false),[recorded,setRecorded]=useState('');
  const [devices,setDevices]=useState<MediaDeviceInfo[]>([]),[deviceId,setDeviceId]=useState(''),[recordStatus,setRecordStatus]=useState('');
  const [panel,setPanel]=useState(false),[sessions,setSessions]=useState<MidiSession[]>([]),[selected,setSelected]=useState(''),[taking,setTaking]=useState(false),[replaying,setReplaying]=useState(false),[midiInputs,setMidiInputs]=useState<{id:string;name:string}[]>([]),[midiOutputs,setMidiOutputs]=useState<{id:string;name:string}[]>([]),[midiInput,setMidiInput]=useState(''),[midiOutput,setMidiOutput]=useState('');
@@ -146,6 +152,7 @@ export default function Prototype(){
  const musicRef=useRef({notes:new Map<number,number>(),pedal:false,last:0,connected:false});
  const midiAccessRef=useRef<MIDIAccess|null>(null),recorderRef=useRef<MediaRecorder|null>(null),streamRef=useRef<MediaStream|null>(null);
  useEffect(()=>()=>{if(recorded)URL.revokeObjectURL(recorded);},[recorded]);
+ useEffect(()=>()=>{if(captureClock.current!==null)clearInterval(captureClock.current);},[]);
  useEffect(()=>{void loadSessions().then(setSessions).catch(e=>setRecordStatus(String(e)));},[]);
  useEffect(()=>()=>{playbackTimers.current.forEach(clearTimeout);midiAccessRef.current?.inputs.forEach(input=>{input.onmidimessage=null;});if(recorderRef.current?.state==='recording')recorderRef.current.stop();streamRef.current?.getTracks().forEach(t=>t.stop());},[]);
  function onMidi(data:number[],now=performance.now()){
@@ -232,12 +239,12 @@ export default function Prototype(){
    const mime=['video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm','video/mp4'].find(x=>MediaRecorder.isTypeSupported(x));
    const recorder=new MediaRecorder(stream,mime?{mimeType:mime}:undefined),chunks:BlobPart[]=[];
    recorder.ondataavailable=e=>{if(e.data.size)chunks.push(e.data);};
-   recorder.onstop=()=>{const blob=new Blob(chunks,{type:recorder.mimeType||'video/webm'});const url=URL.createObjectURL(blob);setRecorded(old=>{if(old)URL.revokeObjectURL(old);return url;});stream.getTracks().forEach(t=>t.stop());streamRef.current=null;setRecording(false);setRecordStatus('Enregistrement terminé · fichier disponible');};
-   recorderRef.current=recorder;recorder.start(1000);setRecording(true);
+   recorder.onstop=()=>{if(captureClock.current!==null){clearInterval(captureClock.current);captureClock.current=null;}const blob=new Blob(chunks,{type:recorder.mimeType||'video/webm'});const url=URL.createObjectURL(blob);setRecorded(old=>{if(old)URL.revokeObjectURL(old);return url;});stream.getTracks().forEach(t=>t.stop());streamRef.current=null;setRecording(false);setPreviewOpen(true);setRecordStatus('Enregistrement terminé · aperçu disponible');};
+   recorderRef.current=recorder;recorder.start(1000);recordStart.current=performance.now();setCaptureSeconds(0);captureClock.current=window.setInterval(()=>setCaptureSeconds(Math.floor((performance.now()-recordStart.current)/1000)),500);setRecording(true);
   }catch(error){setRecordStatus('Enregistrement : '+String(error));setRecording(false);}
  }
  return <main style={{position:'fixed',inset:0,overflow:'hidden',background:'#faf8f1',fontFamily:'system-ui,sans-serif',color:'#284044'}}>
-  <PixelField playing={playing} canvasRef={canvasRef} musicRef={musicRef} onStats={(s,f)=>{setStep(s);setFps(f);}}/>
+  <PixelField playing={playing} canvasRef={canvasRef} musicRef={musicRef} paletteRef={paletteRef} detailRef={detailRef} onStats={(s,f)=>{setStep(s);setFps(f);}}/>
   <div style={{position:'absolute',top:14,left:14,right:14,display:'flex',justifyContent:'space-between',pointerEvents:'none'}}>
    <div style={{padding:'10px 13px',borderRadius:15,background:'#fffdf6e0'}}><strong style={{fontSize:12,letterSpacing:1}}>AQUARELLE VIVANTE •°</strong><div style={{fontSize:11,opacity:.7}}>V7 · matière organique résonante</div></div>
    <div style={{fontSize:12,padding:11,borderRadius:15,background:'#fffdf6e0'}}>{fps} FPS</div>
@@ -257,15 +264,22 @@ export default function Prototype(){
    <button style={buttonStyle} onClick={()=>void toggleTake()}>{taking?'■ Terminer la prise MIDI':'● Enregistrer MIDI'}</button>
    <label style={{display:'block',marginTop:12}}>Sessions enregistrées<select style={{width:'100%'}} value={selected} onChange={e=>setSelected(e.target.value)}><option value=''>Choisir une session</option>{sessions.map(s=><option key={s.id} value={s.id}>{s.name} ({Math.round(s.duration/1000)} s)</option>)}</select></label>
    <div style={{display:'flex',flexWrap:'wrap',gap:6,marginTop:8}}><button style={buttonStyle} disabled={!selected||replaying} onClick={playSession}>▶ Rejouer</button><button style={buttonStyle} disabled={!replaying} onClick={stopPlayback}>■ Stop</button><button style={buttonStyle} disabled={!selected} onClick={exportSession}>JSON</button><button style={buttonStyle} disabled={!selected} onClick={()=>void removeSession()}>Supprimer</button></div>
+   <h3>Direction artistique</h3>
+   <label style={{display:'block'}}>Palette picturale<select style={{width:'100%'}} value={palette} onChange={e=>{const v=Number(e.target.value);setPalette(v);paletteRef.current=v;}}>{PALETTES.map((p,i)=><option key={p.name} value={i}>{p.name}</option>)}</select></label>
+   <label style={{display:'block',marginTop:12}}>Détails organiques · {Math.round(detail*100)} %<input style={{width:'100%'}} type='range' min='.2' max='1' step='.1' value={detail} onChange={e=>{const v=Number(e.target.value);setDetail(v);detailRef.current=v;}}/></label>
+   <button style={{...buttonStyle,marginTop:8}} onClick={()=>{const a=document.createElement('a');a.href=canvasRef.current?.toDataURL('image/png')||'';a.download='pianomorphoz-aquarelle.png';a.click();}}>Exporter une image PNG</button>
    <h3>Production audiovisuelle</h3>
    <p>Sélectionner l'entrée audio USB ou le micro. Puis utiliser « Vidéo » pour enregistrer l'image et le son ensemble.</p>
    <button style={buttonStyle} onClick={selectAudio}>Choisir la source audio</button>
    {devices.length>0&&<select style={{display:'block',width:'100%',marginTop:8}} value={deviceId} onChange={e=>setDeviceId(e.target.value)}><option value=''>Microphone par défaut</option>{devices.map(d=><option key={d.deviceId} value={d.deviceId}>{d.label||'Entrée audio'}</option>)}</select>}
    <p style={{fontSize:11,opacity:.75}}>{recordStatus}</p>
+   {recorded&&<button style={buttonStyle} onClick={()=>setPreviewOpen(true)}>▶ Prévisualiser la capture</button>}
    <p style={{fontSize:11}}>Pour le mastering WAV et le montage avancé : <a href='?studio=1'>outils historiques</a>.</p>
   </section>}
   {devices.length>0&&<div style={{position:'absolute',top:100,left:14,background:'#fffdf6ed',padding:8,borderRadius:12,maxWidth:'85vw'}}><label style={{fontSize:11}}>Source audio <select value={deviceId} onChange={e=>setDeviceId(e.target.value)}><option value=''>Microphone par défaut</option>{devices.map(d=><option key={d.deviceId} value={d.deviceId}>{d.label||'Entrée audio'}</option>)}</select></label></div>}
   {recordStatus&&<div style={{position:'absolute',top:150,left:14,fontSize:11,background:'#fffdf6ed',padding:'5px 9px',borderRadius:9,maxWidth:'80vw'}}>{recordStatus}</div>}
+  {recording&&<div style={{position:'absolute',top:14,left:'50%',transform:'translateX(-50%)',background:'#8d2335',color:'white',borderRadius:30,padding:'8px 16px',fontSize:12,fontWeight:700}}>● REC {Math.floor(captureSeconds/60).toString().padStart(2,'0')}:{(captureSeconds%60).toString().padStart(2,'0')}</div>}
+  {previewOpen&&recorded&&<div style={{position:'absolute',inset:0,zIndex:20,background:'#182122e8',display:'flex',alignItems:'center',justifyContent:'center',padding:16}}><div style={{width:'min(760px,96vw)',background:'#fffdf6',padding:16,borderRadius:20}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}><strong>Prévisualisation de la prise</strong><button style={buttonStyle} onClick={()=>setPreviewOpen(false)}>Fermer</button></div><video src={recorded} controls playsInline style={{width:'100%',maxHeight:'65vh',background:'#000',borderRadius:10}}/><div style={{display:'flex',gap:10,marginTop:12}}><a style={{...buttonStyle,textDecoration:'none'}} href={recorded} download={'pianomorphoz-capture.'+(recorded&&recorderRef.current?.mimeType.includes('mp4')?'mp4':'webm')}>Télécharger la vidéo</a></div></div></div>}
   {recorded&&<a href={recorded} download={'aquarelle-vivante-'+Date.now()+'.webm'} style={{position:'absolute',top:185,left:14,...buttonStyle,textDecoration:'none',fontSize:12}}>Télécharger la vidéo WebM</a>}
  </main>;
 }
