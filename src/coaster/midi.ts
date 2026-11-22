@@ -2,24 +2,28 @@ export type MidiEvent = {t:number;data:number[]};
 export type MidiSession = {id:string;name:string;created:number;duration:number;events:MidiEvent[];seed:number};
 export class CoasterMidi {
  access:MIDIAccess|null=null;
- inputId='';outputId='';onEvent:(data:number[],t:number)=>void=()=>{};
+ inputId='';outputId='';onEvent:(data:number[],t:number)=>void=()=>{};onDevicesChange:()=>void=()=>{};lastInputError='';
  async connect(){
   if(!navigator.requestMIDIAccess)throw Error('Web MIDI indisponible sur ce navigateur');
   this.access=await navigator.requestMIDIAccess({sysex:false});
-  this.access.onstatechange=()=>this.bind();
-  this.bind();
+  this.access.onstatechange=()=>{void this.bind();this.onDevicesChange();};
+  await this.bind();
  }
  get inputs(){return [...(this.access?.inputs.values()||[])].map(d=>({id:d.id,name:d.name||'MIDI IN'}));}
  get outputs(){return [...(this.access?.outputs.values()||[])].map(d=>({id:d.id,name:d.name||'MIDI OUT'}));}
- selectInput(id:string){this.inputId=id;this.bind();}
+ async selectInput(id:string){this.inputId=id;await this.bind();}
  selectOutput(id:string){this.outputId=id;}
- private bind(){
+ private async bind(){
   if(!this.access)return;
   for(const i of this.access.inputs.values())i.onmidimessage=null;
   if(!this.inputs.some(i=>i.id===this.inputId))this.inputId=this.inputs[0]?.id||'';
   if(!this.outputs.some(i=>i.id===this.outputId))this.outputId=this.outputs[0]?.id||'';
   const input=this.access.inputs.get(this.inputId);
-  if(input)input.onmidimessage=e=>{if(e.data)this.onEvent([...e.data],performance.now());};
+  if(input){
+   input.onmidimessage=e=>{if(e.data)this.onEvent(Array.from(e.data),e.timeStamp||performance.now());};
+   try{await input.open();this.lastInputError='';}catch(error){this.lastInputError=String(error);}
+  }else{this.lastInputError='Aucune entrée MIDI détectée';}
+
  }
  get output(){return this.access?.outputs.get(this.outputId)||null;}
  send(data:number[],when?:number){const o=this.output;if(!o)throw Error('Aucune sortie MIDI sélectionnée');o.send(data,when);}
