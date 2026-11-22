@@ -159,7 +159,6 @@ function PixelField({playing,immersive,onStats,canvasRef,musicRef,paletteRef,det
    livingPhase+=dt*(.1+living.autonomy*.8);
    if(playingRef.current){
     for(const event of impulses){
-     emitCosmos(event);
      const index=Math.max(0,Math.min(87,event.note-21));
      speed[index]+=.13+event.velocity/127*.72;
      const theta=index*2.39996323,radius=.12+.29*index/87;
