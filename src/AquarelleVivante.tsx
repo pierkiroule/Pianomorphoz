@@ -210,8 +210,8 @@ function PixelField({playing,onStats,canvasRef,musicRef,paletteRef,detailRef,liv
 }
 export default function Prototype(){
  const [mode,setMode]=useState(0),[uiVisible,setUiVisible]=useState(true),[playing,setPlaying]=useState(true),[step,setStep]=useState(0),[fps,setFps]=useState(0);
- const [living,setLiving]=useState<LivingSettings>(DEFAULT_LIVING),[palette,setPalette]=useState(0),[detail,setDetail]=useState(1),[previewOpen,setPreviewOpen]=useState(false),[captureSeconds,setCaptureSeconds]=useState(0);
- const livingRef=useRef<LivingSettings>({...DEFAULT_LIVING}),paletteRef=useRef(0),detailRef=useRef(1),recordStart=useRef(0),captureClock=useRef<number|null>(null);
+ const [living,setLiving]=useState<LivingSettings>({...DEFAULT_LIVING,filter:2,intensity:.65,autonomy:.42,memory:.8}),[palette,setPalette]=useState(7),[detail,setDetail]=useState(.9),[previewOpen,setPreviewOpen]=useState(false),[captureSeconds,setCaptureSeconds]=useState(0);
+ const livingRef=useRef<LivingSettings>({...DEFAULT_LIVING,filter:2,intensity:.65,autonomy:.42,memory:.8}),paletteRef=useRef(7),detailRef=useRef(.9),recordStart=useRef(0),captureClock=useRef<number|null>(null);
  const [midiStatus,setMidiStatus]=useState('Démo automatique'),[recording,setRecording]=useState(false),[recorded,setRecorded]=useState('');
  const [devices,setDevices]=useState<MediaDeviceInfo[]>([]),[deviceId,setDeviceId]=useState(''),[recordStatus,setRecordStatus]=useState('');
  const [panel,setPanel]=useState(false),[sessions,setSessions]=useState<MidiSession[]>([]),[selected,setSelected]=useState(''),[taking,setTaking]=useState(false),[replaying,setReplaying]=useState(false),[midiInputs,setMidiInputs]=useState<{id:string;name:string}[]>([]),[midiOutputs,setMidiOutputs]=useState<{id:string;name:string}[]>([]),[midiInput,setMidiInput]=useState(''),[midiOutput,setMidiOutput]=useState('');
