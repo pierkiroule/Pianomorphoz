@@ -6,8 +6,8 @@ export class CoasterMidi {
  async connect(){
   if(!navigator.requestMIDIAccess)throw Error('Web MIDI indisponible sur ce navigateur');
   this.access=await navigator.requestMIDIAccess({sysex:false});
-  this.access.onstatechange=()=>{void this.bind();this.onDevicesChange();};
-  await this.bind();
+  this.access.onstatechange=()=>{this.onDevicesChange();};
+  await this.bind();this.onDevicesChange();
  }
  get inputs(){return [...(this.access?.inputs.values()||[])].map(d=>({id:d.id,name:d.name||'MIDI IN'}));}
  get outputs(){return [...(this.access?.outputs.values()||[])].map(d=>({id:d.id,name:d.name||'MIDI OUT'}));}
@@ -21,7 +21,7 @@ export class CoasterMidi {
   const input=this.access.inputs.get(this.inputId);
   if(input){
    input.onmidimessage=e=>{if(e.data)this.onEvent(Array.from(e.data),e.timeStamp||performance.now());};
-   try{await input.open();this.lastInputError='';}catch(error){this.lastInputError=String(error);}
+   try{if(input.connection!=='open')await input.open();this.lastInputError='';}catch(error){this.lastInputError=String(error);}
   }else{this.lastInputError='Aucune entrée MIDI détectée';}
 
  }
