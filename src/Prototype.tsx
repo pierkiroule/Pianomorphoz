@@ -72,7 +72,7 @@ function Simulation({playing,quality,onStatus}:{playing:boolean;quality:number;o
   const gl=canvas.getContext('webgl2',{alpha:false,antialias:false,preserveDrawingBuffer:false});
   if(!gl)return;
   const ext=gl.getExtension('EXT_color_buffer_float');
-  if(!ext){console.warn('Floating point render targets unavailable');return;}
+  const floatTargets=Boolean(ext);
   const compile=(kind:number,source:string)=>{
    const sh=gl.createShader(kind);if(!sh)throw Error('shader allocation');
    gl.shaderSource(sh,source);gl.compileShader(sh);
@@ -97,14 +97,14 @@ function Simulation({playing,quality,onStatus}:{playing:boolean;quality:number;o
    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);
    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.REPEAT);
    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.REPEAT);
-   const data=new Float32Array(N*N*4);
+   const data=floatTargets?new Float32Array(N*N*4):new Uint8Array(N*N*4);
    for(let y=0;y<N;y++)for(let x=0;x<N;x++){
     const p=(y*N+x)*4,dx=(x-N/2)/N,dy=(y-N/2)/N;
     const r=Math.sqrt(dx*dx+dy*dy),angle=Math.atan2(dy,dx);
     const rings=Math.sin(r*135+angle*7)*.5+.5;
-    data[p]=1;data[p+1]=(r<.12&&rings>.4)?(.7+.2*rings):0;data[p+3]=1;
+    data[p]=floatTargets?1:255;data[p+1]=(r<.12&&rings>.4)?(floatTargets?(.7+.2*rings):Math.round(255*(.7+.2*rings))):0;data[p+3]=floatTargets?1:255;
    }
-   gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA32F,N,N,0,gl.RGBA,gl.FLOAT,data);
+   if(floatTargets)gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA32F,N,N,0,gl.RGBA,gl.FLOAT,data);else gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA8,N,N,0,gl.RGBA,gl.UNSIGNED_BYTE,data);
    gl.bindFramebuffer(gl.FRAMEBUFFER,fbo);gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,tex,0);
    if(gl.checkFramebufferStatus(gl.FRAMEBUFFER)!==gl.FRAMEBUFFER_COMPLETE)throw Error('framebuffer incomplete');
    targets.push({tex,fbo});
@@ -132,7 +132,7 @@ function Simulation({playing,quality,onStatus}:{playing:boolean;quality:number;o
     gl.useProgram(sim);gl.viewport(0,0,N,N);gl.uniform1i(s.prev,0);
     gl.uniform2f(s.pixel,1/N,1/N);gl.uniform1f(s.time,time);
     gl.uniform1f(s.feed,mix('feed'));gl.uniform1f(s.kill,mix('kill'));gl.uniform1f(s.flow,mix('flow'));gl.uniform1f(s.seed,step);
-    for(let i=0;i<5;i++){
+    for(let i=0;i<2;i++){
      gl.bindFramebuffer(gl.FRAMEBUFFER,targets[1-index].fbo);
      gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,targets[index].tex);
      gl.uniform1f(s.dt,1);gl.drawArrays(gl.TRIANGLES,0,3);index=1-index;
@@ -168,7 +168,7 @@ export default function Prototype(){
    <div style={{display:'flex',gap:7}}><button style={BUTTON} onClick={()=>setPlaying(v=>!v)}>{playing?'Ⅱ Pause':'▶ Reprendre'}</button><button style={BUTTON} onClick={()=>setSettings(v=>!v)}>⚙</button></div>
   </div>
   {settings&&<div style={{position:'absolute',right:15,bottom:80,padding:16,width:245,maxWidth:'calc(100vw - 30px)',background:'#fffdf6f4',borderRadius:17,boxShadow:'0 8px 30px #3453'}}>
-   <strong>Laboratoire pixel</strong><p style={{fontSize:12,lineHeight:1.5}}>Simulation Gray–Scott 256×256, advection légère, injection de pigment et mémoire des états. WebGL2 requis. Accords simulés.</p>
+   <strong>Laboratoire pixel</strong><p style={{fontSize:12,lineHeight:1.5}}>Simulation Gray–Scott 256×256, advection légère et mémoire. Repli automatique en textures RGBA8 si les textures flottantes ne sont pas prises en charge. WebGL2 requis. Accords simulés.</p>
    <label style={{fontSize:12}}>Résolution {quality.toFixed(2)}×<input style={{width:'100%'}} type="range" min=".5" max="1.5" step=".05" value={quality} onChange={e=>setQuality(Number(e.target.value))}/></label>
    <button style={{...BUTTON,marginTop:8}} onClick={()=>setSettings(false)}>Fermer</button>
   </div>}
