@@ -248,7 +248,7 @@ function PixelField({playing,onStats,canvasRef,musicRef,paletteRef,detailRef,liv
     });
     veilTexture.needsUpdate=true;renderer.render(scene,camera);
    }
-   if(renderer&&frame%2===0){
+   if(renderer){
     ctx.drawImage(renderer.domElement,0,0,width,height);
     ctx.save();ctx.globalAlpha=.1;ctx.filter='blur(11px)';
     ctx.drawImage(renderer.domElement,-width*.015,-height*.015,width*1.03,height*1.03);
@@ -280,10 +280,10 @@ function PixelField({playing,onStats,canvasRef,musicRef,paletteRef,detailRef,liv
  return <canvas ref={canvas} style={{position:'absolute',inset:0,width:'100%',height:'100%',display:'block'}}/>;
 }
 export default function Prototype(){
- const [mode,setMode]=useState(0),[uiVisible,setUiVisible]=useState(true),[playing,setPlaying]=useState(true),[step,setStep]=useState(0),[fps,setFps]=useState(0);
- const [living,setLiving]=useState<LivingSettings>({...DEFAULT_LIVING,filter:2,intensity:.65,autonomy:.42,memory:.8}),[palette,setPalette]=useState(7),[detail,setDetail]=useState(.9),[previewOpen,setPreviewOpen]=useState(false),[captureSeconds,setCaptureSeconds]=useState(0);
+ const [uiVisible,setUiVisible]=useState(true),[playing,setPlaying]=useState(true);
+ const [previewOpen,setPreviewOpen]=useState(false),[captureSeconds,setCaptureSeconds]=useState(0);
  const livingRef=useRef<LivingSettings>({...DEFAULT_LIVING,filter:2,intensity:.65,autonomy:.42,memory:.8}),paletteRef=useRef(7),detailRef=useRef(.9),recordStart=useRef(0),captureClock=useRef<number|null>(null);
- const [midiStatus,setMidiStatus]=useState('Démo automatique'),[recording,setRecording]=useState(false),[recorded,setRecorded]=useState('');
+ const [midiStatus,setMidiStatus]=useState('Connecter un piano pour peindre'),[recording,setRecording]=useState(false),[recorded,setRecorded]=useState('');
  const [devices,setDevices]=useState<MediaDeviceInfo[]>([]),[deviceId,setDeviceId]=useState(''),[recordStatus,setRecordStatus]=useState('');
  const [panel,setPanel]=useState(false),[sessions,setSessions]=useState<MidiSession[]>([]),[selected,setSelected]=useState(''),[taking,setTaking]=useState(false),[replaying,setReplaying]=useState(false),[midiInputs,setMidiInputs]=useState<{id:string;name:string}[]>([]),[midiOutputs,setMidiOutputs]=useState<{id:string;name:string}[]>([]),[midiInput,setMidiInput]=useState(''),[midiOutput,setMidiOutput]=useState('');
  const midiRecorder=useRef(new MidiRecorder()),playbackTimers=useRef<number[]>([]),replayRef=useRef(false),recordingRef=useRef(false);
@@ -291,13 +291,6 @@ export default function Prototype(){
  const musicRef=useRef({notes:new Map<number,number>(),pedal:false,last:0,connected:false,impulses:[] as Gesture[],audioEnergy:0});
  const midiAccessRef=useRef<MIDIAccess|null>(null),recorderRef=useRef<MediaRecorder|null>(null),streamRef=useRef<MediaStream|null>(null);
  useEffect(()=>()=>{if(recorded)URL.revokeObjectURL(recorded);},[recorded]);
- function applyMode(index:number){
-  const preset=MODES[index];if(!preset)return;
-  setMode(index);setPalette(preset.palette);paletteRef.current=preset.palette;
-  setDetail(preset.detail);detailRef.current=preset.detail;
-  const next={filter:preset.filter,intensity:preset.intensity,autonomy:preset.autonomy,memory:preset.memory,blend:preset.blend};
-  livingRef.current=next;setLiving(next);
- }
  function captureImage(){
   const canvas=canvasRef.current;if(!canvas)return;
   const stamp=new Date().toISOString().replace(/[:.]/g,'-');
@@ -309,7 +302,7 @@ export default function Prototype(){
    window.setTimeout(()=>URL.revokeObjectURL(url),30000);
   },'image/png');
  }
- function updateLiving(patch:Partial<LivingSettings>){const next={...livingRef.current,...patch};livingRef.current=next;setLiving(next);}
+
  useEffect(()=>()=>{if(captureClock.current!==null)clearInterval(captureClock.current);},[]);
  useEffect(()=>{void loadSessions().then(setSessions).catch(e=>setRecordStatus(String(e)));},[]);
  useEffect(()=>()=>{playbackTimers.current.forEach(clearTimeout);midiAccessRef.current?.inputs.forEach(input=>{input.onmidimessage=null;});if(recorderRef.current?.state==='recording')recorderRef.current.stop();streamRef.current?.getTracks().forEach(t=>t.stop());},[]);
@@ -402,10 +395,10 @@ export default function Prototype(){
   }catch(error){setRecordStatus('Enregistrement : '+String(error));setRecording(false);}
  }
  return <main style={{position:'fixed',inset:0,overflow:'hidden',background:'#faf8f1',fontFamily:'system-ui,sans-serif',color:'#284044'}}>
-  <PixelField playing={playing} canvasRef={canvasRef} musicRef={musicRef} paletteRef={paletteRef} detailRef={detailRef} livingRef={livingRef} onStats={(s,f)=>{setStep(s);setFps(f);}}/>
+  <PixelField playing={playing} canvasRef={canvasRef} musicRef={musicRef} paletteRef={paletteRef} detailRef={detailRef} livingRef={livingRef} onStats={()=>{}}/>
   <button aria-label={uiVisible?'Masquer les commandes':'Afficher les commandes'} title={uiVisible?'Mode immersion':'Afficher les commandes'} onClick={()=>{setUiVisible(v=>!v);setPanel(false);}} style={{...buttonStyle,position:'absolute',top:12,right:12,zIndex:12,padding:'9px 12px',fontSize:12,background:'#fffdf6c9',backdropFilter:'blur(12px)'}}>{uiVisible?'◌ Immersion':'☷'}</button>
   {uiVisible&&<div style={{position:'absolute',top:12,left:12,zIndex:4,background:'#fffdf6b8',backdropFilter:'blur(12px)',borderRadius:14,padding:'7px 11px',fontSize:11,pointerEvents:'none'}}>
-   <strong>PIANOMORPHOZ •°</strong><span style={{opacity:.6}}> · {STATES[step].name}</span>
+   <strong>PIANOMORPHOZ •°</strong><span style={{opacity:.6}}> · MORPHÉA</span>
   </div>}
   {uiVisible&&<div style={{position:'absolute',bottom:'max(12px,env(safe-area-inset-bottom))',left:'50%',transform:'translateX(-50%)',display:'flex',alignItems:'center',gap:6,zIndex:8,background:'#fffdf6ce',backdropFilter:'blur(16px)',border:'1px solid #d5dbd4',padding:6,borderRadius:28,boxShadow:'0 6px 24px #20322a20',maxWidth:'calc(100vw - 20px)'}}>
    <button style={{...buttonStyle,padding:'9px 12px'}} onClick={()=>setPanel(v=>!v)} aria-label="Réglages du studio" title="Atelier et réglages">☷ Atelier</button>
@@ -416,28 +409,15 @@ export default function Prototype(){
   </div>}
   {panel&&uiVisible&&<section style={{position:'absolute',top:55,right:12,bottom:75,width:'min(350px,calc(100vw - 24px))',overflowY:'auto',background:'#fffdf6f5',border:'1px solid #d4dcd5',borderRadius:20,padding:16,boxShadow:'0 8px 40px #2442',fontSize:13,zIndex:5}}>
    <div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}><h2 style={{margin:'0 0 10px',fontSize:17}}>Atelier pictural</h2><button style={{...buttonStyle,padding:'5px 10px'}} onClick={()=>setPanel(false)} aria-label='Fermer les réglages'>✕</button></div>
-   <p>Le piano pilote directement l'encre. Les prises MIDI sont conservées sur cet appareil.</p>
+   <p>Jouez. La matière interprète vos gestes, sans réglage esthétique.</p><p style={{fontSize:11,opacity:.75}}>{midiStatus}</p>
    <button style={buttonStyle} onClick={connectMidi}>Connecter le piano MIDI</button>
    {midiInputs.length>0&&<label style={{display:'block',marginTop:10}}>Entrée MIDI<select style={{width:'100%'}} value={midiInput} onChange={e=>bindMidi(midiAccessRef.current!,e.target.value)}>{midiInputs.map(d=><option key={d.id} value={d.id}>{d.name}</option>)}</select></label>}
    {midiOutputs.length>0&&<label style={{display:'block',marginTop:10}}>Sortie Yamaha<select style={{width:'100%'}} value={midiOutput} onChange={e=>setMidiOutput(e.target.value)}>{midiOutputs.map(d=><option key={d.id} value={d.id}>{d.name}</option>)}</select></label>}
-   <h3>Enregistrer une improvisation</h3>
+   <details><summary style={{cursor:'pointer',marginTop:14,fontWeight:600}}>Sessions MIDI (facultatif)</summary><h3>Enregistrer une improvisation</h3>
    <button style={buttonStyle} onClick={()=>void toggleTake()}>{taking?'■ Terminer la prise MIDI':'● Enregistrer MIDI'}</button>
    <label style={{display:'block',marginTop:12}}>Sessions enregistrées<select style={{width:'100%'}} value={selected} onChange={e=>setSelected(e.target.value)}><option value=''>Choisir une session</option>{sessions.map(s=><option key={s.id} value={s.id}>{s.name} ({Math.round(s.duration/1000)} s)</option>)}</select></label>
    <div style={{display:'flex',flexWrap:'wrap',gap:6,marginTop:8}}><button style={buttonStyle} disabled={!selected||replaying} onClick={playSession}>▶ Rejouer</button><button style={buttonStyle} disabled={!replaying} onClick={stopPlayback}>■ Stop</button><button style={buttonStyle} disabled={!selected} onClick={exportSession}>JSON</button><button style={buttonStyle} disabled={!selected} onClick={()=>void removeSession()}>Supprimer</button></div>
-   <h3>Ambiances picturales</h3>
-   <p style={{fontSize:11,opacity:.7}}>Un mode suffit. La membrane et les pigments évoluent ensemble.</p>
-   <div style={{display:'grid',gridTemplateColumns:'repeat(2,minmax(0,1fr))',gap:8}}>
-    {MODES.map((preset,i)=><button key={preset.name} onClick={()=>applyMode(i)} aria-pressed={mode===i} style={{...buttonStyle,textAlign:'left',border:mode===i?'2px solid #3c756b':'1px solid #d5dbd4',background:mode===i?'#e6f0e9':'#fffdf6',borderRadius:13,padding:'12px 10px'}}><strong style={{display:'block',fontSize:12}}>{preset.name}</strong><span style={{display:'block',fontSize:10,fontWeight:400,opacity:.7,marginTop:4}}>{preset.description}</span></button>)}
-   </div>
-   <details style={{marginTop:16,borderTop:'1px solid #d7dfd7',paddingTop:12}}>
-    <summary style={{cursor:'pointer',fontSize:12,fontWeight:600}}>Réglages avancés (facultatifs)</summary>
-    <label style={{display:'block',marginTop:12}}>Matière<select style={{width:'100%'}} value={living.filter} onChange={e=>updateLiving({filter:Number(e.target.value),blend:false})}>{FILTERS.map((name,i)=><option key={name} value={i}>{name}</option>)}</select></label>
-    <label style={{display:'block',marginTop:10}}><input type='checkbox' checked={living.blend} onChange={e=>updateLiving({blend:e.target.checked})}/> Évolution automatique</label>
-    {([['intensity','Intensité'],['autonomy','Autonomie'],['memory','Mémoire']] as const).map(([key,label])=><label key={key} style={{display:'block',marginTop:10}}>{label} · {Math.round(living[key]*100)} %<input style={{width:'100%'}} type='range' min='0' max='1' step='.05' value={living[key]} onChange={e=>updateLiving({[key]:Number(e.target.value)})}/></label>)}
-    <label style={{display:'block',marginTop:12}}>Palette<select style={{width:'100%'}} value={palette} onChange={e=>{const v=Number(e.target.value);setPalette(v);paletteRef.current=v;}}>{PALETTES.map((p,i)=><option key={p.name} value={i}>{p.name}</option>)}</select></label>
-    <label style={{display:'block',marginTop:12}}>Détails · {Math.round(detail*100)} %<input style={{width:'100%'}} type='range' min='.2' max='1' step='.1' value={detail} onChange={e=>{const v=Number(e.target.value);setDetail(v);detailRef.current=v;}}/></label>
-   </details>
-   <button style={{...buttonStyle,marginTop:12}} onClick={captureImage}>Exporter PNG</button>
+   </details><p style={{fontSize:12,opacity:.75}}>MORPHÉA interprète le jeu et transforme automatiquement les pigments, les voiles et la lumière. Aucun style à régler.</p>
    <h3>Production audiovisuelle</h3>
    <p>Sélectionner l'entrée audio USB ou le micro. Puis utiliser « Vidéo » pour enregistrer l'image et le son ensemble.</p>
    <button style={buttonStyle} onClick={selectAudio}>Choisir la source audio</button>
