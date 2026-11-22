@@ -336,6 +336,8 @@ export default function Prototype(){
  const midiRecorder=useRef(new MidiRecorder()),playbackTimers=useRef<number[]>([]),replayRef=useRef(false),recordingRef=useRef(false);
  const canvasRef=useRef<HTMLCanvasElement>(null);
  const [hasGesture,setHasGesture]=useState(false);
+ const [midiDiagnostic,setMidiDiagnostic]=useState('Aucun message MIDI reçu');
+ const midiEvents=useRef(0);
  const musicRef=useRef({notes:new Map<number,number>(),pedal:false,last:0,connected:false,impulses:[] as Gesture[],audioEnergy:0});
  const listenRef=useRef<{stream:MediaStream;context:AudioContext;timer:number}|null>(null),[listening,setListening]=useState(false);
  const midiAccessRef=useRef<MIDIAccess|null>(null),recorderRef=useRef<MediaRecorder|null>(null),streamRef=useRef<MediaStream|null>(null);
@@ -362,30 +364,55 @@ export default function Prototype(){
   const note=60+Math.floor(Math.random()*13);
   musicRef.current.impulses.push({note,velocity:100,time:now});
  }
- function onMidi(data:number[],now=performance.now()){
+ function onMidi(data:number[],now=performance.now(),source='MIDI'){
+  if(!data.length)return;
   if(recordingRef.current)midiRecorder.current.push(data,now);
-  const command=data[0]&240,n=data[1],v=data[2];
-  if(command===144&&v>0){setHasGesture(true);musicRef.current.notes.set(n,v);musicRef.current.impulses.push({note:n,velocity:v,time:now});if(musicRef.current.impulses.length>96)musicRef.current.impulses.splice(0,48);}
-  if(command===128||(command===144&&v===0))musicRef.current.notes.delete(n);
-  if(command===176&&n===64)musicRef.current.pedal=v>=64;
-  musicRef.current.last=now;
+  const command=data[0]&240,n=data[1],v=data[2]??0;
+  // A real NOTE ON is the only event that creates a drop.
+  if(command===144&&v>0&&n>=0&&n<=127){
+   setHasGesture(true);
+   musicRef.current.notes.set(n,v);
+   musicRef.current.impulses.push({note:n,velocity:v,time:performance.now()});
+   if(musicRef.current.impulses.length>96)musicRef.current.impulses.splice(0,48);
+   midiEvents.current++;
+   setMidiDiagnostic(source+' · note '+n+' · vélocité '+v+' · '+midiEvents.current+' attaque(s)');
+  }else if(command===128||(command===144&&v===0)){
+   musicRef.current.notes.delete(n);
+  }else if(command===176&&n===64){
+   musicRef.current.pedal=v>=64;
+  }
+  musicRef.current.last=performance.now();
  }
  function bindMidi(access:MIDIAccess,id?:string){
-  const inputs=[...access.inputs.values()],outputs=[...access.outputs.values()];
-  const input=inputs.find(i=>i.id===id)||inputs[0];
+  const inputs=[...access.inputs.values()].filter(i=>i.state==='connected');
+  const outputs=[...access.outputs.values()];
+  const selected=id&&inputs.some(i=>i.id===id)?id:'';
+  // Listen to every connected USB MIDI input by default. The first input
+  // is often a control port rather than the Yamaha keyboard note port.
   access.inputs.forEach(i=>{i.onmidimessage=null;});
-  if(input)input.onmidimessage=e=>{if(e.data)onMidi(Array.from(e.data),e.timeStamp||performance.now());};
+  for(const input of inputs){
+   if(selected&&input.id!==selected)continue;
+   input.onmidimessage=e=>{
+    if(e.data)onMidi(Array.from(e.data),performance.now(),input.name||'MIDI USB');
+   };
+  }
   setMidiInputs(inputs.map(i=>({id:i.id,name:i.name||'MIDI IN'})));
   setMidiOutputs(outputs.map(i=>({id:i.id,name:i.name||'MIDI OUT'})));
-  setMidiInput(input?.id||'');setMidiOutput(old=>outputs.some(o=>o.id===old)?old:outputs[0]?.id||'');
-  musicRef.current.connected=!!input;setMidiStatus(input?'MIDI : '+(input.name||'entrée active'):'Aucune entrée MIDI');
+  setMidiInput(selected);
+  setMidiOutput(old=>outputs.some(o=>o.id===old)?old:outputs[0]?.id||'');
+  musicRef.current.connected=inputs.length>0;
+  setMidiStatus(inputs.length?'MIDI connecté : '+inputs.length+' entrée(s) · écoute '+(selected?'sélectionnée':'de toutes les entrées'):'Aucune entrée MIDI USB détectée');
+  if(!inputs.length)setMidiDiagnostic('Aucune entrée MIDI : vérifier le câble USB et les autorisations Chrome/Edge');
  }
  async function connectMidi(){
   try{
-   if(!navigator.requestMIDIAccess)throw Error('Web MIDI indisponible. Utiliser Chrome ou Edge.');
-   const access=await navigator.requestMIDIAccess();midiAccessRef.current=access;
-   bindMidi(access);access.onstatechange=()=>bindMidi(access);
-  }catch(error){setMidiStatus(String(error));}
+   if(!navigator.requestMIDIAccess)throw Error('Web MIDI indisponible. Utiliser Chrome ou Edge sur PC.');
+   setMidiStatus('Autorisation MIDI en cours…');
+   const access=await navigator.requestMIDIAccess({sysex:false});
+   midiAccessRef.current=access;
+   bindMidi(access);
+   access.onstatechange=()=>bindMidi(access,midiInput);
+  }catch(error){setMidiStatus('Connexion MIDI impossible : '+String(error));}
  }
  function stopPlayback(){
   playbackTimers.current.forEach(clearTimeout);playbackTimers.current=[];replayRef.current=false;setReplaying(false);
@@ -483,6 +510,7 @@ export default function Prototype(){
  return <main style={{position:'fixed',inset:0,overflow:'hidden',background:'#faf8f1',fontFamily:'system-ui,sans-serif',color:'#284044'}}>
   <SumiResonance playing={playing} canvasRef={canvasRef} musicRef={musicRef}/>
   {!hasGesture&&<div style={{position:'absolute',top:'44%',left:'50%',transform:'translate(-50%,-50%)',zIndex:3,textAlign:'center',pointerEvents:'none',color:'#486160',width:'min(90vw,360px)'}}><div style={{fontSize:22,fontWeight:300,letterSpacing:'.06em'}}>La toile attend une note.</div><div style={{fontSize:12,marginTop:9,opacity:.7}}>Jouez du piano ou essayez une goutte.</div></div>}
+  {uiVisible&&<div aria-live='polite' style={{position:'absolute',top:104,left:12,zIndex:9,maxWidth:'min(380px,calc(100vw - 24px))',padding:'6px 10px',borderRadius:12,background:'#fffdf6df',fontSize:11,color:'#28584b'}}>{midiStatus}<div style={{fontWeight:600,marginTop:3}}>{midiDiagnostic}</div></div>}
   {uiVisible&&<button onClick={testDrop} style={{...buttonStyle,position:'absolute',top:58,left:12,zIndex:10,fontSize:12,padding:'8px 13px'}}>＋ Une goutte test</button>}
   <button aria-label={uiVisible?'Masquer les commandes':'Afficher les commandes'} title={uiVisible?'Mode immersion':'Afficher les commandes'} onClick={()=>{setUiVisible(v=>!v);setPanel(false);}} style={{...buttonStyle,position:'absolute',top:12,right:12,zIndex:12,padding:'9px 12px',fontSize:12,background:'#fffdf6c9',backdropFilter:'blur(12px)'}}>{uiVisible?'◌ Immersion':'☷'}</button>
   {uiVisible&&<div style={{position:'absolute',top:12,left:12,zIndex:4,background:'#fffdf6b8',backdropFilter:'blur(12px)',borderRadius:14,padding:'7px 11px',fontSize:11,pointerEvents:'none'}}>
@@ -497,9 +525,9 @@ export default function Prototype(){
   </div>}
   {panel&&uiVisible&&<section style={{position:'absolute',top:55,right:12,bottom:75,width:'min(350px,calc(100vw - 24px))',overflowY:'auto',background:'#fffdf6f5',border:'1px solid #d4dcd5',borderRadius:20,padding:16,boxShadow:'0 8px 40px #2442',fontSize:13,zIndex:5}}>
    <div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}><h2 style={{margin:'0 0 10px',fontSize:17}}>Atelier pictural</h2><button style={{...buttonStyle,padding:'5px 10px'}} onClick={()=>setPanel(false)} aria-label='Fermer les réglages'>✕</button></div>
-   <p>Jouez. La matière interprète vos gestes, sans réglage esthétique.</p><p style={{fontSize:11,opacity:.75}}>{midiStatus}</p>
+   <p>Jouez. La matière interprète vos gestes, sans réglage esthétique.</p><p style={{fontSize:11,opacity:.75}}>{midiStatus}</p><p aria-live='polite' style={{fontSize:12,fontWeight:600,color:'#23634f'}}>{midiDiagnostic}</p>
    <button style={buttonStyle} onClick={connectMidi}>Connecter le piano MIDI</button>
-   {midiInputs.length>0&&<label style={{display:'block',marginTop:10}}>Entrée MIDI<select style={{width:'100%'}} value={midiInput} onChange={e=>bindMidi(midiAccessRef.current!,e.target.value)}>{midiInputs.map(d=><option key={d.id} value={d.id}>{d.name}</option>)}</select></label>}
+   {midiInputs.length>0&&<label style={{display:'block',marginTop:10}}>Entrée MIDI<select style={{width:'100%'}} value={midiInput} onChange={e=>bindMidi(midiAccessRef.current!,e.target.value)}><option value=''>Toutes les entrées (recommandé)</option>{midiInputs.map(d=><option key={d.id} value={d.id}>{d.name}</option>)}</select></label>}
    {midiOutputs.length>0&&<label style={{display:'block',marginTop:10}}>Sortie Yamaha<select style={{width:'100%'}} value={midiOutput} onChange={e=>setMidiOutput(e.target.value)}>{midiOutputs.map(d=><option key={d.id} value={d.id}>{d.name}</option>)}</select></label>}
    <details><summary style={{cursor:'pointer',marginTop:14,fontWeight:600}}>Sessions MIDI (facultatif)</summary><h3>Enregistrer une improvisation</h3>
    <button style={buttonStyle} onClick={()=>void toggleTake()}>{taking?'■ Terminer la prise MIDI':'● Enregistrer MIDI'}</button>
