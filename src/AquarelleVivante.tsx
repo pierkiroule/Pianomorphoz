@@ -64,17 +64,14 @@ function PixelField({playing,immersive,onStats,canvasRef,musicRef,paletteRef,det
   const veilImage=veilContext?.createImageData(N,N);
   let a=new Float32Array(N*N),b=new Float32Array(N*N),nextA=new Float32Array(N*N),nextB=new Float32Array(N*N);
   const seed=()=>{
+   // Sparse elongated ink washes, no central disk, satellites or circular bubbles.
    for(let y=0;y<N;y++)for(let x=0;x<N;x++){
-    const i=y*N+x,dx=(x-N/2)/N,dy=(y-N/2)/N,r=Math.hypot(dx,dy),angle=Math.atan2(dy,dx);
-    a[i]=1;
-    // Dense central ink and several satellites are visible on the first frame.
-    const edge=.14+.028*Math.sin(angle*7)+.018*Math.sin(angle*13);
-    b[i]=r<edge?.9:0;
-    for(let j=0;j<11;j++){
-     const theta=j*2.39996,rad=.2+.035*Math.sin(j*4.2);
-     const xx=.5+Math.cos(theta)*rad,yy=.5+Math.sin(theta)*rad;
-     if(Math.hypot(x/N-xx,y/N-yy)<.025)b[i]=.95;
-    }
+    const i=y*N+x,xx=x/N-.5,yy=y/N-.5;
+    a[i]=1;b[i]=0;
+    const ribbon=Math.sin(xx*8.1+Math.sin(yy*4.2)*1.8)*.07+Math.sin(yy*5.3+xx*2.8)*.035;
+    const distance=Math.abs(yy-xx*.34-ribbon);
+    const envelope=Math.max(0,1-Math.abs(xx)*1.6);
+    if(distance<.018*envelope&&xx>-.38&&xx<.36)b[i]=.28*(1-distance/(.018*envelope+.0001));
    }
   };seed();
   let frame=0,elapsed=0,raf=0,last=performance.now(),fps=0,count=0,lastFps=last,lastStats=0;
@@ -155,7 +152,7 @@ function PixelField({playing,immersive,onStats,canvasRef,musicRef,paletteRef,det
    const living=livingRef.current;
    const activity=clamp(energy*.75+(musicRef.current.pedal?.15:0));
    const drive=clamp((.36+perception.novelty*.22)*( .35+activity*.5+reservoir*.35));
-   const currentFilter=Math.min(5,Math.floor((perception.novelty*.6+perception.register*.3+Math.sin(elapsed*.017)*.1+.1)*6));
+   const currentFilter=perception.density>.6?1:perception.register>.65?3:perception.novelty>.6?2:4;
    livingPhase+=dt*(.1+living.autonomy*.8);
    if(playingRef.current){
     for(const event of impulses){
@@ -224,16 +221,16 @@ function PixelField({playing,immersive,onStats,canvasRef,musicRef,paletteRef,det
     const grad=Math.hypot(right-left,down-up);
     const swirl=Math.sin(xx*17+Math.sin(yy*11+t*.11)*2.3+t*.23)*Math.cos(yy*14-t*.17);
     const r=Math.hypot(xx,yy);
-    const oil=Math.sin((r+swirl*.023)*125+v*22+t*.23);
+    const oil=Math.sin((yy+xx*.38+swirl*.023)*125+v*22+t*.23);
     const cells=Math.sin(x*.24+Math.sin(y*.14+t*.15)*1.7)*Math.sin(y*.21+Math.cos(x*.12-t*.13)*1.8);
     const boundary=Math.pow(Math.max(0,1-Math.abs(oil)),13)*Math.max(0,Math.min(1,v*5+.13));
     const micro=Math.pow(Math.max(0,1-Math.abs(cells)),10)*Math.max(0,Math.min(1,v*3));
     const density=Math.max(0,Math.min(1,v*2.45));
     const dendrite=Math.pow(clamp(1-Math.abs(Math.sin(x*.27+Math.sin(y*.06+t*.12)*4)*Math.cos(y*.31+Math.sin(x*.04-t*.09)*3))),15);
-    const rings=Math.pow(clamp(1-Math.abs(Math.sin(r*155+swirl*7+t*.12))),16);
+    const filaments=Math.pow(clamp(1-Math.abs(Math.sin((yy+xx*.27)*155+swirl*7+t*.12))),16);
     const mineral=Math.pow(clamp(1-Math.abs(Math.sin(x*.19+y*.13+Math.sin(y*.08+t*.03)*4))),24);
-    const floral=Math.pow(clamp(1-Math.abs(Math.sin(Math.atan2(yy,xx)*9+r*65-t*.18))),12);
-    const effects=[boundary+micro*.3,dendrite*density,floral*density,mineral*density,history[i],rings*density];
+    const floral=Math.pow(clamp(1-Math.abs(Math.sin((yy+xx*.45)*65+swirl*2-t*.18))),12);
+    const effects=[boundary*.3+micro*.3,dendrite*density,floral*density*.35,mineral*density,history[i],dendrite*density*.45];
     const material=clamp((effects[currentFilter]*(living.blend?.75:1)+effects[(currentFilter+1)%6]*(living.blend?.25:0))*drive);
     history[i]=clamp(history[i]*(.93+living.memory*.069)+material*.014);
     crystal[i]=clamp(crystal[i]*.986+mineral*density*.014);
@@ -246,7 +243,7 @@ function PixelField({playing,immersive,onStats,canvasRef,musicRef,paletteRef,det
     const dark=clamp(density*.71+membrane[i]*.45+edge*.24+capillary*.15+wet[i]*.12+material*.27+history[i]*living.memory*.18+crystal[i]*.08);
     const gold=clamp((Math.sin(xx*8+yy*13+t*.09)+1)*.5*membrane[i]*.65+(currentFilter===5?material*.55:0));
     const grain=((x*73+y*131+x*y*17)%101)/101-.5;
-    const bloom=Math.pow(Math.max(0,1-Math.abs(Math.sin((xx*xx+yy*yy)*330+swirl*3+t*.15))),18)*density*.09;
+    const bloom=Math.pow(Math.max(0,1-Math.abs(Math.sin((yy+xx*.3)*330+swirl*3+t*.15))),18)*density*.09;
     const p=i*4;
     pix[p]=Math.max(0,Math.min(255,palette.paper[0]*(1-dark)+(palette.ink[0]*(1-inkHue*.3)+72*inkHue*.3)*dark+gold*28+bloom*22+grain*2));
     pix[p+1]=Math.max(0,Math.min(255,palette.paper[1]*(1-dark)+palette.ink[1]*dark+mist*7+gold*10+bloom*18+grain*2));
@@ -281,7 +278,7 @@ function PixelField({playing,immersive,onStats,canvasRef,musicRef,paletteRef,det
     for(let k=veilLayers-1;k>=0;k--){
      const depth=(k+veilLayers-phase)%veilLayers;
      const near=1-depth/veilLayers;
-     const zoom=.48+near*1.55;
+     const zoom=.85+near*2.5;
      const span=base*zoom;
      const x=width*.5-span*.5+turnX*(.3+near*.7)+Math.sin(flight*.23+k*2.1)*base*.11*near;
      const y=height*.5-span*.5+turnY*(.3+near*.7)+Math.cos(flight*.19+k*1.7)*base*.08*near;
@@ -289,6 +286,7 @@ function PixelField({playing,immersive,onStats,canvasRef,musicRef,paletteRef,det
      ctx.globalAlpha=flightMix*(.11+near*.64);
      ctx.translate(x+span*.5,y+span*.5);
      ctx.rotate(Math.sin(flight*.13+k)*.045);
+     ctx.scale(1.22,.86);
      ctx.drawImage(veilCanvas,-span*.5,-span*.5,span,span);
      ctx.restore();
     }
