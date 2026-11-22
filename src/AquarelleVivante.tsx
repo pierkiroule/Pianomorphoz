@@ -334,6 +334,7 @@ export default function Prototype(){
  const [panel,setPanel]=useState(false),[sessions,setSessions]=useState<MidiSession[]>([]),[selected,setSelected]=useState(''),[taking,setTaking]=useState(false),[replaying,setReplaying]=useState(false),[midiInputs,setMidiInputs]=useState<{id:string;name:string}[]>([]),[midiOutputs,setMidiOutputs]=useState<{id:string;name:string}[]>([]),[midiInput,setMidiInput]=useState(''),[midiOutput,setMidiOutput]=useState('');
  const midiRecorder=useRef(new MidiRecorder()),playbackTimers=useRef<number[]>([]),replayRef=useRef(false),recordingRef=useRef(false);
  const canvasRef=useRef<HTMLCanvasElement>(null);
+ const [hasGesture,setHasGesture]=useState(false);
  const musicRef=useRef({notes:new Map<number,number>(),pedal:false,last:0,connected:false,impulses:[] as Gesture[],audioEnergy:0});
  const listenRef=useRef<{stream:MediaStream;context:AudioContext;timer:number}|null>(null),[listening,setListening]=useState(false);
  const midiAccessRef=useRef<MIDIAccess|null>(null),recorderRef=useRef<MediaRecorder|null>(null),streamRef=useRef<MediaStream|null>(null);
@@ -353,10 +354,17 @@ export default function Prototype(){
  useEffect(()=>()=>{if(captureClock.current!==null)clearInterval(captureClock.current);},[]);
  useEffect(()=>{void loadSessions().then(setSessions).catch(e=>setRecordStatus(String(e)));},[]);
  useEffect(()=>()=>{if(listenRef.current){clearInterval(listenRef.current.timer);listenRef.current.stream.getTracks().forEach(t=>t.stop());void listenRef.current.context.close();}playbackTimers.current.forEach(clearTimeout);midiAccessRef.current?.inputs.forEach(input=>{input.onmidimessage=null;});if(recorderRef.current?.state==='recording')recorderRef.current.stop();streamRef.current?.getTracks().forEach(t=>t.stop());},[]);
+ function testDrop(){
+  if(!playing)setPlaying(true);
+  setHasGesture(true);
+  const now=performance.now();
+  const note=60+Math.floor(Math.random()*13);
+  musicRef.current.impulses.push({note,velocity:100,time:now});
+ }
  function onMidi(data:number[],now=performance.now()){
   if(recordingRef.current)midiRecorder.current.push(data,now);
   const command=data[0]&240,n=data[1],v=data[2];
-  if(command===144&&v>0){musicRef.current.notes.set(n,v);musicRef.current.impulses.push({note:n,velocity:v,time:now});if(musicRef.current.impulses.length>96)musicRef.current.impulses.splice(0,48);}
+  if(command===144&&v>0){setHasGesture(true);musicRef.current.notes.set(n,v);musicRef.current.impulses.push({note:n,velocity:v,time:now});if(musicRef.current.impulses.length>96)musicRef.current.impulses.splice(0,48);}
   if(command===128||(command===144&&v===0))musicRef.current.notes.delete(n);
   if(command===176&&n===64)musicRef.current.pedal=v>=64;
   musicRef.current.last=now;
@@ -473,6 +481,8 @@ export default function Prototype(){
  }
  return <main style={{position:'fixed',inset:0,overflow:'hidden',background:'#faf8f1',fontFamily:'system-ui,sans-serif',color:'#284044'}}>
   <PixelField playing={playing} immersive={!uiVisible} canvasRef={canvasRef} musicRef={musicRef} paletteRef={paletteRef} detailRef={detailRef} livingRef={livingRef} onStats={()=>{}}/>
+  {!hasGesture&&<div style={{position:'absolute',top:'44%',left:'50%',transform:'translate(-50%,-50%)',zIndex:3,textAlign:'center',pointerEvents:'none',color:'#486160',width:'min(90vw,360px)'}}><div style={{fontSize:22,fontWeight:300,letterSpacing:'.06em'}}>La toile attend une note.</div><div style={{fontSize:12,marginTop:9,opacity:.7}}>Jouez du piano ou essayez une goutte.</div></div>}
+  {uiVisible&&<button onClick={testDrop} style={{...buttonStyle,position:'absolute',top:58,left:12,zIndex:10,fontSize:12,padding:'8px 13px'}}>＋ Une goutte test</button>}
   <button aria-label={uiVisible?'Masquer les commandes':'Afficher les commandes'} title={uiVisible?'Mode immersion':'Afficher les commandes'} onClick={()=>{setUiVisible(v=>!v);setPanel(false);}} style={{...buttonStyle,position:'absolute',top:12,right:12,zIndex:12,padding:'9px 12px',fontSize:12,background:'#fffdf6c9',backdropFilter:'blur(12px)'}}>{uiVisible?'◌ Immersion':'☷'}</button>
   {uiVisible&&<div style={{position:'absolute',top:12,left:12,zIndex:4,background:'#fffdf6b8',backdropFilter:'blur(12px)',borderRadius:14,padding:'7px 11px',fontSize:11,pointerEvents:'none'}}>
    <strong>PIANOMORPHOZ •°</strong><span style={{opacity:.6}}> · MORPHÉA</span>
