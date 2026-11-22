@@ -80,6 +80,28 @@ function PixelField({playing,onStats,canvasRef,musicRef,paletteRef,detailRef,liv
   let frame=0,elapsed=0,raf=0,last=performance.now(),fps=0,count=0,lastFps=last,lastStats=0;
   const pigment=new Float32Array(N*N),membrane=new Float32Array(N*N),wet=new Float32Array(N*N);
   const history=new Float32Array(N*N),crystal=new Float32Array(N*N);
+  // Semi-Lagrangian transport with a divergence-free curl field. Reuse all buffers.
+  const transported=new Float32Array(N*N);
+  const flowX=new Float32Array(N*N),flowY=new Float32Array(N*N);
+  const waveX=new Float32Array(N*N);
+  for(let y=1;y<N-1;y++)for(let x=1;x<N-1;x++){
+   const i=y*N+x,xx=x/N-.5,yy=y/N-.5;
+   const theta=Math.atan2(yy,xx),radius=Math.hypot(xx,yy);
+   const potential=Math.sin(xx*12+Math.sin(yy*8)*1.7)*Math.cos(yy*13-Math.sin(xx*7)*1.4)+.5*Math.sin(theta*5+radius*32);
+   waveX[i]=potential;
+  }
+  for(let y=2;y<N-2;y++)for(let x=2;x<N-2;x++){
+   const i=y*N+x;
+   flowX[i]=(waveX[i+N]-waveX[i-N])*.5;
+   flowY[i]=-(waveX[i+1]-waveX[i-1])*.5;
+  }
+  let reservoir=0,inkBudget=0;
+  const sample=(field:Float32Array,x:number,y:number)=>{
+   const xx=Math.max(1,Math.min(N-2.001,x)),yy=Math.max(1,Math.min(N-2.001,y));
+   const x0=xx|0,y0=yy|0,fx=xx-x0,fy=yy-y0,i=y0*N+x0;
+   return (field[i]*(1-fx)+field[i+1]*fx)*(1-fy)+(field[i+N]*(1-fx)+field[i+N+1]*fx)*fy;
+  };
+
   const clamp=(v:number)=>Math.max(0,Math.min(1,v));
   let livingPhase=0;
   const grammar=createMorphogenesis();
@@ -125,6 +147,11 @@ function PixelField({playing,onStats,canvasRef,musicRef,paletteRef,detailRef,liv
    const active=[...musicRef.current.notes.entries()];
    const impulses=playingRef.current?musicRef.current.impulses.splice(0,48):[];
    const perception=grammar.observe(impulses,now,active.length,musicRef.current.audioEnergy);
+   // Energy is supplied by actual gestures/audio, never by a demo timer.
+   const input=Math.min(1,impulses.reduce((s,e)=>s+e.velocity/127,0)*.16+musicRef.current.audioEnergy*.3);
+   reservoir=Math.min(1.6,Math.max(0,reservoir*Math.exp(-dt*.24)+input*.42));
+   inkBudget=Math.min(1.2,Math.max(0,inkBudget*Math.exp(-dt*.11)+input*.3));
+
    morphology+=(perception.energy+morphology*.12-morphology)*.025;
    const pitches=active.map(([n])=>n),velocity=active.reduce((sum,[,v])=>sum+v,0)/Math.max(1,active.length)/127;
    const pcs=new Set(pitches.map(n=>n%12));
@@ -135,7 +162,7 @@ function PixelField({playing,onStats,canvasRef,musicRef,paletteRef,detailRef,liv
    const midiStep=major?0:minor?1:diminished?3:suspended?2:pitches.length?4:5;
    const step=musicRef.current.connected?midiStep:5;
    const state=STATES[step];
-   const energy=perception.energy;
+   const energy=Math.min(1,perception.energy*.55+reservoir*.45);
    const register=pitches.length?pitches.reduce((s,n)=>s+n,0)/pitches.length:60;
    const registerBias=(register-60)/48;
    const palette=PALETTES[paletteRef.current]||PALETTES[0];
@@ -143,7 +170,7 @@ function PixelField({playing,onStats,canvasRef,musicRef,paletteRef,detailRef,liv
    inkHue+=(chroma-inkHue)*.006;
    const living=livingRef.current;
    const activity=clamp(energy*.75+(musicRef.current.pedal?.15:0));
-   const drive=clamp((.42+perception.novelty*.3)*( .35+activity*.65));
+   const drive=clamp((.36+perception.novelty*.22)*( .35+activity*.5+reservoir*.35));
    const currentFilter=Math.min(5,Math.floor((perception.novelty*.6+perception.register*.3+Math.sin(elapsed*.017)*.1+.1)*6));
    livingPhase+=dt*(.1+living.autonomy*.8);
    if(playingRef.current){
@@ -153,10 +180,11 @@ function PixelField({playing,onStats,canvasRef,musicRef,paletteRef,detailRef,liv
      const theta=index*2.39996323,radius=.12+.29*index/87;
      const power=event.velocity/127;
      const shape=power>.8?2:perception.density>.5?1:0;
-     const drops=1+Math.floor(power*2+perception.density*2);
+     const drops=Math.min(5,1+Math.floor(power*2+perception.density*2));
+     const spend=Math.min(inkBudget,.035+drops*.022);inkBudget-=spend;
      for(let d=0;d<drops;d++){
       const jitter=d===0?0:Math.sin(event.time*.07+d*2.4)*.018*power;
-      deposit(.5+Math.cos(theta)*radius+displacement[index]*.06+jitter,.5+Math.sin(theta)*radius+displacement[index]*.06-jitter,power*(d===0?1:.35),shape);
+      deposit(.5+Math.cos(theta)*radius+displacement[index]*.06+jitter,.5+Math.sin(theta)*radius+displacement[index]*.06-jitter,power*(d===0?1:.35)*(.65+spend*3),shape);
      }
     }
     const damping=.966+living.memory*.022;
@@ -172,6 +200,21 @@ function PixelField({playing,onStats,canvasRef,musicRef,paletteRef,detailRef,liv
      for(const [note,velocity] of active.slice(0,count)){
       const j=Math.max(0,Math.min(87,note-21)),theta=j*2.39996323,radius=.12+.29*j/87;
       deposit(.5+Math.cos(theta)*radius+displacement[j]*.06,.5+Math.sin(theta)*radius+displacement[j]*.06,velocity/127*.18,1);
+     }
+    }
+    // Advect pigment by backtracking trajectories in a divergence-free field.
+    // The transport step is bounded and fades during silence.
+    if(frame%2===0&&reservoir>.003){
+     const strength=Math.min(.72,reservoir*.32+.035);
+     const drift=elapsed*.12;
+     const cs=Math.cos(drift),sn=Math.sin(drift);
+     for(let y=2;y<N-2;y++)for(let x=2;x<N-2;x++){
+      const i=y*N+x;
+      const vx=flowX[i]*cs-flowY[i]*sn,vy=flowX[i]*sn+flowY[i]*cs;
+      transported[i]=sample(b,x-vx*strength,y-vy*strength);
+     }
+     for(let y=2;y<N-2;y++)for(let x=2;x<N-2;x++){
+      const i=y*N+x;b[i]=Math.min(1,Math.max(0,transported[i]));
      }
     }
     for(let iteration=0;iteration<(fps>0&&fps<24?1:2);iteration++){
