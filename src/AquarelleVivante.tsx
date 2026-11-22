@@ -289,6 +289,7 @@ export default function Prototype(){
  const midiRecorder=useRef(new MidiRecorder()),playbackTimers=useRef<number[]>([]),replayRef=useRef(false),recordingRef=useRef(false);
  const canvasRef=useRef<HTMLCanvasElement>(null);
  const musicRef=useRef({notes:new Map<number,number>(),pedal:false,last:0,connected:false,impulses:[] as Gesture[],audioEnergy:0});
+ const listenRef=useRef<{stream:MediaStream;context:AudioContext;timer:number}|null>(null),[listening,setListening]=useState(false);
  const midiAccessRef=useRef<MIDIAccess|null>(null),recorderRef=useRef<MediaRecorder|null>(null),streamRef=useRef<MediaStream|null>(null);
  useEffect(()=>()=>{if(recorded)URL.revokeObjectURL(recorded);},[recorded]);
  function captureImage(){
@@ -305,7 +306,7 @@ export default function Prototype(){
 
  useEffect(()=>()=>{if(captureClock.current!==null)clearInterval(captureClock.current);},[]);
  useEffect(()=>{void loadSessions().then(setSessions).catch(e=>setRecordStatus(String(e)));},[]);
- useEffect(()=>()=>{playbackTimers.current.forEach(clearTimeout);midiAccessRef.current?.inputs.forEach(input=>{input.onmidimessage=null;});if(recorderRef.current?.state==='recording')recorderRef.current.stop();streamRef.current?.getTracks().forEach(t=>t.stop());},[]);
+ useEffect(()=>()=>{if(listenRef.current){clearInterval(listenRef.current.timer);listenRef.current.stream.getTracks().forEach(t=>t.stop());void listenRef.current.context.close();}playbackTimers.current.forEach(clearTimeout);midiAccessRef.current?.inputs.forEach(input=>{input.onmidimessage=null;});if(recorderRef.current?.state==='recording')recorderRef.current.stop();streamRef.current?.getTracks().forEach(t=>t.stop());},[]);
  function onMidi(data:number[],now=performance.now()){
   if(recordingRef.current)midiRecorder.current.push(data,now);
   const command=data[0]&240,n=data[1],v=data[2];
@@ -372,6 +373,36 @@ export default function Prototype(){
    setRecordStatus('Choisir une entrée audio, idéalement Yamaha USB.');
   }catch(error){setRecordStatus('Entrées audio : '+String(error));}
  }
+ async function toggleListening(){
+  if(listenRef.current){
+   const l=listenRef.current;clearInterval(l.timer);l.stream.getTracks().forEach(t=>t.stop());void l.context.close();
+   listenRef.current=null;musicRef.current.audioEnergy=0;setListening(false);return;
+  }
+  try{
+   const stream=await navigator.mediaDevices.getUserMedia({audio:{deviceId:deviceId?{exact:deviceId}:undefined,echoCancellation:false,noiseSuppression:false,autoGainControl:false}});
+   const context=new AudioContext(),source=context.createMediaStreamSource(stream),analyser=context.createAnalyser();
+   analyser.fftSize=1024;analyser.smoothingTimeConstant=.62;source.connect(analyser);
+   const wave=new Uint8Array(analyser.fftSize),spectrum=new Uint8Array(analyser.frequencyBinCount);
+   let prev=0,lastOnset=0;
+   const timer=window.setInterval(()=>{
+    analyser.getByteTimeDomainData(wave);analyser.getByteFrequencyData(spectrum);
+    let sum=0;for(let i=0;i<wave.length;i++){const v=(wave[i]-128)/128;sum+=v*v;}
+    const rms=Math.sqrt(sum/wave.length),energy=Math.min(1,Math.max(0,(rms-.012)*6));
+    musicRef.current.audioEnergy+=(energy-musicRef.current.audioEnergy)*.23;
+    const now=performance.now();
+    if(energy>.12&&energy>prev*1.26&&now-lastOnset>125){
+     let total=0,weighted=0;
+     for(let i=2;i<spectrum.length;i++){const w=spectrum[i];total+=w;weighted+=i*w;}
+     const centroid=total?weighted/total:50;
+     const note=Math.round(Math.max(36,Math.min(95,42+centroid*.18)));
+     musicRef.current.impulses.push({note,velocity:Math.round(Math.min(127,Math.max(25,energy*127))),time:now});
+     lastOnset=now;
+    }
+    prev=energy;
+   },40);
+   listenRef.current={stream,context,timer};setListening(true);setRecordStatus('Écoute active · aucun retour audio vers les haut-parleurs');
+  }catch(error){setRecordStatus('Écoute audio : '+String(error));setListening(false);}
+ }
  async function toggleRecording(){
   if(recorderRef.current?.state==='recording'){recorderRef.current.stop();setRecording(false);return;}
   try{
@@ -421,6 +452,7 @@ export default function Prototype(){
    <h3>Production audiovisuelle</h3>
    <p>Sélectionner l'entrée audio USB ou le micro. Puis utiliser « Vidéo » pour enregistrer l'image et le son ensemble.</p>
    <button style={buttonStyle} onClick={selectAudio}>Choisir la source audio</button>
+   <button style={{...buttonStyle,marginLeft:6}} onClick={()=>void toggleListening()}>{listening?'■ Arrêter l’écoute':'◉ Écouter le son'}</button>
    {devices.length>0&&<select style={{display:'block',width:'100%',marginTop:8}} value={deviceId} onChange={e=>setDeviceId(e.target.value)}><option value=''>Microphone par défaut</option>{devices.map(d=><option key={d.deviceId} value={d.deviceId}>{d.label||'Entrée audio'}</option>)}</select>}
    <p style={{fontSize:11,opacity:.75}}>{recordStatus}</p>
    {recorded&&<button style={buttonStyle} onClick={()=>setPreviewOpen(true)}>▶ Prévisualiser la capture</button>}
