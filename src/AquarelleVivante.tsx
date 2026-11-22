@@ -1,4 +1,5 @@
 import {useEffect,useRef,useState} from 'react';
+import * as THREE from 'three';
 import {MidiRecorder} from './coaster/midi';
 import type {MidiSession} from './coaster/midi';
 import {loadSessions,saveSession,deleteSession} from './coaster/storage';
@@ -22,15 +23,33 @@ PALETTES.push(
  {name:'Forêt cellulaire',paper:[248,249,243],ink:[36,91,59]},
  {name:'Sumi-e précieux',paper:[250,249,246],ink:[23,26,30]}
 );
-const MODES=[
- {name:'Jardin d’encre',description:'Floraisons délicates',palette:7,filter:2,intensity:.65,autonomy:.42,memory:.8,detail:.9,blend:true},
- {name:'Lagune',description:'Courants fluides',palette:5,filter:0,intensity:.72,autonomy:.7,memory:.58,detail:.85,blend:true},
- {name:'Sumi-e',description:'Encre et ramifications',palette:8,filter:1,intensity:.56,autonomy:.38,memory:.85,detail:1,blend:false},
- {name:'Alchimie',description:'Cristaux et iridescence',palette:6,filter:3,intensity:.9,autonomy:.85,memory:.55,detail:1,blend:true},
- {name:'Contemplation',description:'Traces aériennes',palette:0,filter:4,intensity:.4,autonomy:.2,memory:.95,detail:.65,blend:false}
-] as const;
+type Gesture={note:number;velocity:number;time:number};
+type Perception={energy:number;density:number;register:number;contrast:number;silence:number;novelty:number};
+function createMorphogenesis(){
+ let last=0,flow=0,contrast=.35,phase=0,accumulated=0;
+ const history:Gesture[]=[];
+ return {
+  observe(events:Gesture[],now:number,active:number,audio:number):Perception{
+   for(const event of events)history.push(event);
+   while(history.length&&now-history[0].time>6500)history.shift();
+   if(events.length)last=now;
+   const recent=history.filter(x=>now-x.time<1200);
+   const density=Math.min(1,recent.length/12);
+   const velocity=recent.length?recent.reduce((sum,x)=>sum+x.velocity,0)/recent.length/127:0;
+   const register=recent.length?recent.reduce((sum,x)=>sum+x.note,0)/recent.length/127:.48;
+   const interval=recent.length>1?Math.abs(recent[recent.length-1].note-recent[0].note)/48:0;
+   const target=Math.min(1,velocity*.45+density*.45+audio*.65+Math.min(1,active/6)*.2);
+   flow+=(target-flow)*.075;
+   contrast+=(Math.min(1,interval+density*.4+audio*.3)-contrast)*.012;
+   const silence=last?Math.max(0,(now-last)/1000):20;
+   accumulated+=density*.012;
+   phase+=(density+.04)*.003;
+   return {energy:flow,density,register,contrast,silence,novelty:Math.min(1,Math.abs(Math.sin(phase*2.3))*contrast+Math.max(0,accumulated-2)*.02)};
+  }
+ };
+}
 const buttonStyle:React.CSSProperties={border:'1px solid #cbd4d0',background:'#fffdf6e8',borderRadius:20,padding:'10px 13px',color:'#284044',fontWeight:600};
-function PixelField({playing,onStats,canvasRef,musicRef,paletteRef,detailRef,livingRef}:{playing:boolean;onStats:(step:number,fps:number)=>void;canvasRef:React.RefObject<HTMLCanvasElement|null>;musicRef:React.RefObject<{notes:Map<number,number>;pedal:boolean;last:number;connected:boolean;impulses:{note:number;velocity:number}[]}>;paletteRef:React.RefObject<number>;detailRef:React.RefObject<number>;livingRef:React.RefObject<LivingSettings>}){
+function PixelField({playing,onStats,canvasRef,musicRef,paletteRef,detailRef,livingRef}:{playing:boolean;onStats:(step:number,fps:number)=>void;canvasRef:React.RefObject<HTMLCanvasElement|null>;musicRef:React.RefObject<{notes:Map<number,number>;pedal:boolean;last:number;connected:boolean;impulses:Gesture[];audioEnergy:number}>;paletteRef:React.RefObject<number>;detailRef:React.RefObject<number>;livingRef:React.RefObject<LivingSettings>}){
  const canvas=canvasRef;
  const playingRef=useRef(playing);playingRef.current=playing;
  const statsRef=useRef(onStats);statsRef.current=onStats;
@@ -60,14 +79,16 @@ function PixelField({playing,onStats,canvasRef,musicRef,paletteRef,detailRef,liv
   const history=new Float32Array(N*N),crystal=new Float32Array(N*N);
   const clamp=(v:number)=>Math.max(0,Math.min(1,v));
   let livingPhase=0;
+  const grammar=createMorphogenesis();
+  let morphology=0,inkHue=0;
   const displacement=new Float32Array(88),speed=new Float32Array(88),nextSpeed=new Float32Array(88);
   let lastDrop=0;
-  const deposit=(nx:number,ny:number,force:number)=>{
-   const cx=Math.floor(nx*N),cy=Math.floor(ny*N),radius=2+Math.round(force*5);
+  const deposit=(nx:number,ny:number,force:number,shape=0)=>{
+   const cx=Math.floor(nx*N),cy=Math.floor(ny*N),radius=1+Math.round(force*7);
    for(let dy=-radius;dy<=radius;dy++)for(let dx=-radius;dx<=radius;dx++){
     const x=cx+dx,y=cy+dy,d2=dx*dx+dy*dy;
     if(x<2||x>=N-2||y<2||y>=N-2||d2>radius*radius)continue;
-    const i=y*N+x,w=Math.exp(-d2/(radius*radius*.45));
+    const i=y*N+x,ellipse=shape===1?(dx*dx*.3+dy*dy*2.2):shape===2?(dx*dx*2.4+dy*dy*.35):d2,w=Math.exp(-ellipse/(radius*radius*.45));
     b[i]=Math.min(1,b[i]+(.25+force*.65)*w);
     wet[i]=Math.min(1,wet[i]+w*.12);
    }
@@ -79,6 +100,9 @@ function PixelField({playing,onStats,canvasRef,musicRef,paletteRef,detailRef,liv
    const dt=Math.min(.05,(now-last)/1000);last=now;
    if(playingRef.current)elapsed+=dt;
    const active=[...musicRef.current.notes.entries()];
+   const impulses=playingRef.current?musicRef.current.impulses.splice(0,48):[];
+   const perception=grammar.observe(impulses,now,active.length,musicRef.current.audioEnergy);
+   morphology+=(perception.energy+morphology*.12-morphology)*.025;
    const pitches=active.map(([n])=>n),velocity=active.reduce((sum,[,v])=>sum+v,0)/Math.max(1,active.length)/127;
    const pcs=new Set(pitches.map(n=>n%12));
    const root=pitches.length?Math.min(...pitches)%12:0;
@@ -86,24 +110,31 @@ function PixelField({playing,onStats,canvasRef,musicRef,paletteRef,detailRef,liv
    const major=has([0,4,7]),minor=has([0,3,7]);
    const diminished=has([0,3,6]),suspended=(has([0,5,7])||has([0,2,7]))&&!major&&!minor;
    const midiStep=major?0:minor?1:diminished?3:suspended?2:pitches.length?4:5;
-   const step=musicRef.current.connected?midiStep:Math.floor(elapsed/7)%STATES.length;
+   const step=musicRef.current.connected?midiStep:5;
    const state=STATES[step];
-   const energy=musicRef.current.connected?Math.min(1,velocity+.12*active.length):.42;
+   const energy=perception.energy;
    const register=pitches.length?pitches.reduce((s,n)=>s+n,0)/pitches.length:60;
    const registerBias=(register-60)/48;
    const palette=PALETTES[paletteRef.current]||PALETTES[0];
+   const chroma=Math.min(1,perception.contrast*.45+perception.register*.25+perception.novelty*.3);
+   inkHue+=(chroma-inkHue)*.006;
    const living=livingRef.current;
    const activity=clamp(energy*.75+(musicRef.current.pedal?.15:0));
-   const drive=clamp(living.intensity*(.35+activity*.65));
-   const currentFilter=living.blend?Math.floor(elapsed/13)%FILTERS.length:living.filter;
+   const drive=clamp((.42+perception.novelty*.3)*( .35+activity*.65));
+   const currentFilter=Math.min(5,Math.floor((perception.novelty*.6+perception.register*.3+Math.sin(elapsed*.017)*.1+.1)*6));
    livingPhase+=dt*(.1+living.autonomy*.8);
    if(playingRef.current){
-    const impulses=musicRef.current.impulses.splice(0,48);
     for(const event of impulses){
      const index=Math.max(0,Math.min(87,event.note-21));
      speed[index]+=.13+event.velocity/127*.72;
      const theta=index*2.39996323,radius=.12+.29*index/87;
-     deposit(.5+Math.cos(theta)*radius+displacement[index]*.06,.5+Math.sin(theta)*radius+displacement[index]*.06,event.velocity/127);
+     const power=event.velocity/127;
+     const shape=power>.8?2:perception.density>.5?1:0;
+     const drops=1+Math.floor(power*2+perception.density*2);
+     for(let d=0;d<drops;d++){
+      const jitter=d===0?0:Math.sin(event.time*.07+d*2.4)*.018*power;
+      deposit(.5+Math.cos(theta)*radius+displacement[index]*.06+jitter,.5+Math.sin(theta)*radius+displacement[index]*.06-jitter,power*(d===0?1:.35),shape);
+     }
     }
     const damping=.966+living.memory*.022;
     for(let j=0;j<88;j++){
@@ -111,15 +142,13 @@ function PixelField({playing,onStats,canvasRef,musicRef,paletteRef,detailRef,liv
      nextSpeed[j]=(speed[j]+lap*(.085+living.autonomy*.065)-displacement[j]*.024)*damping;
     }
     for(let j=0;j<88;j++){speed[j]=nextSpeed[j];displacement[j]=Math.max(-1,Math.min(1,displacement[j]+speed[j]));}
-    if(elapsed-lastDrop>.11){
+    // No autonomous drops: silence preserves the painting while the water settles.
+    if(elapsed-lastDrop>.12&&active.length&&perception.energy>.09){
      lastDrop=elapsed;
-     for(const [note,velocity] of [...musicRef.current.notes.entries()].slice(0,8)){
+     const count=Math.min(5,Math.ceil(perception.density*3+perception.energy*2));
+     for(const [note,velocity] of active.slice(0,count)){
       const j=Math.max(0,Math.min(87,note-21)),theta=j*2.39996323,radius=.12+.29*j/87;
-      deposit(.5+Math.cos(theta)*radius+displacement[j]*.06,.5+Math.sin(theta)*radius+displacement[j]*.06,velocity/127*.38);
-     }
-     if(!musicRef.current.connected&&Math.floor(elapsed*2)%3===0){
-      const j=Math.floor(elapsed*7)%88,theta=j*2.39996323,radius=.12+.29*j/87;
-      deposit(.5+Math.cos(theta)*radius+displacement[j]*.06,.5+Math.sin(theta)*radius+displacement[j]*.06,.18);
+      deposit(.5+Math.cos(theta)*radius+displacement[j]*.06,.5+Math.sin(theta)*radius+displacement[j]*.06,velocity/127*.18,1);
      }
     }
     for(let iteration=0;iteration<(fps>0&&fps<24?1:2);iteration++){
@@ -133,13 +162,7 @@ function PixelField({playing,onStats,canvasRef,musicRef,paletteRef,detailRef,liv
      }
      [a,nextA]=[nextA,a];[b,nextB]=[nextB,b];
     }
-    if(frame%(musicRef.current.connected?Math.max(4,Math.round(24-energy*18)):16)===0){
-     const theta=elapsed*.48,angle=musicRef.current.connected?(root/12*Math.PI*2+elapsed*.1):theta;
-     const px=Math.floor(N*(.5+registerBias*.10+.26*Math.cos(angle))),py=Math.floor(N*(.5-registerBias*.10+.26*Math.sin(angle*1.3)));
-     for(let dy=-3;dy<=3;dy++)for(let dx=-3;dx<=3;dx++){
-      const x=px+dx,y=py+dy;if(x>1&&x<N-2&&y>1&&y<N-2&&dx*dx+dy*dy<12)b[y*N+x]=.95;
-     }
-    }
+
    }
    // Four interacting visual scales: Gray-Scott, dye diffusion, oil-like membranes, micrograin.
    const pix=image.data;
@@ -175,9 +198,9 @@ function PixelField({playing,onStats,canvasRef,musicRef,paletteRef,detailRef,liv
     const grain=((x*73+y*131+x*y*17)%101)/101-.5;
     const bloom=Math.pow(Math.max(0,1-Math.abs(Math.sin((xx*xx+yy*yy)*330+swirl*3+t*.15))),18)*density*.09;
     const p=i*4;
-    pix[p]=Math.max(0,Math.min(255,palette.paper[0]*(1-dark)+palette.ink[0]*dark+gold*28+bloom*22+grain*2));
+    pix[p]=Math.max(0,Math.min(255,palette.paper[0]*(1-dark)+(palette.ink[0]*(1-inkHue*.3)+72*inkHue*.3)*dark+gold*28+bloom*22+grain*2));
     pix[p+1]=Math.max(0,Math.min(255,palette.paper[1]*(1-dark)+palette.ink[1]*dark+mist*7+gold*10+bloom*18+grain*2));
-    pix[p+2]=Math.max(0,Math.min(255,palette.paper[2]*(1-dark)+palette.ink[2]*dark+mist*13-gold*9+grain*2));
+    pix[p+2]=Math.max(0,Math.min(255,palette.paper[2]*(1-dark)+(palette.ink[2]*(1-inkHue*.4)+135*inkHue*.4)*dark+mist*13-gold*9+grain*2));
     pix[p+3]=255;
    }
    bc.putImageData(image,0,0);
@@ -217,7 +240,7 @@ export default function Prototype(){
  const [panel,setPanel]=useState(false),[sessions,setSessions]=useState<MidiSession[]>([]),[selected,setSelected]=useState(''),[taking,setTaking]=useState(false),[replaying,setReplaying]=useState(false),[midiInputs,setMidiInputs]=useState<{id:string;name:string}[]>([]),[midiOutputs,setMidiOutputs]=useState<{id:string;name:string}[]>([]),[midiInput,setMidiInput]=useState(''),[midiOutput,setMidiOutput]=useState('');
  const midiRecorder=useRef(new MidiRecorder()),playbackTimers=useRef<number[]>([]),replayRef=useRef(false),recordingRef=useRef(false);
  const canvasRef=useRef<HTMLCanvasElement>(null);
- const musicRef=useRef({notes:new Map<number,number>(),pedal:false,last:0,connected:false,impulses:[] as {note:number;velocity:number}[]});
+ const musicRef=useRef({notes:new Map<number,number>(),pedal:false,last:0,connected:false,impulses:[] as Gesture[],audioEnergy:0});
  const midiAccessRef=useRef<MIDIAccess|null>(null),recorderRef=useRef<MediaRecorder|null>(null),streamRef=useRef<MediaStream|null>(null);
  useEffect(()=>()=>{if(recorded)URL.revokeObjectURL(recorded);},[recorded]);
  function applyMode(index:number){
@@ -245,7 +268,7 @@ export default function Prototype(){
  function onMidi(data:number[],now=performance.now()){
   if(recordingRef.current)midiRecorder.current.push(data,now);
   const command=data[0]&240,n=data[1],v=data[2];
-  if(command===144&&v>0){musicRef.current.notes.set(n,v);musicRef.current.impulses.push({note:n,velocity:v});if(musicRef.current.impulses.length>96)musicRef.current.impulses.splice(0,48);}
+  if(command===144&&v>0){musicRef.current.notes.set(n,v);musicRef.current.impulses.push({note:n,velocity:v,time:now});if(musicRef.current.impulses.length>96)musicRef.current.impulses.splice(0,48);}
   if(command===128||(command===144&&v===0))musicRef.current.notes.delete(n);
   if(command===176&&n===64)musicRef.current.pedal=v>=64;
   musicRef.current.last=now;
