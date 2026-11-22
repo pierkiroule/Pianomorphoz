@@ -59,6 +59,9 @@ function PixelField({playing,onStats,canvasRef,musicRef,paletteRef,detailRef,liv
   const buffer=document.createElement('canvas');buffer.width=N;buffer.height=N;
   const bc=buffer.getContext('2d',{alpha:false});if(!bc)return;
   const image=bc.createImageData(N,N);
+  const veilCanvas=document.createElement('canvas');veilCanvas.width=N;veilCanvas.height=N;
+  const veilContext=veilCanvas.getContext('2d');
+  const veilImage=veilContext?.createImageData(N,N);
   let a=new Float32Array(N*N),b=new Float32Array(N*N),nextA=new Float32Array(N*N),nextB=new Float32Array(N*N);
   const seed=()=>{
    for(let y=0;y<N;y++)for(let x=0;x<N;x++){
@@ -104,7 +107,7 @@ function PixelField({playing,onStats,canvasRef,musicRef,paletteRef,detailRef,liv
    renderer.setPixelRatio(1);
    scene=new THREE.Scene();scene.background=new THREE.Color('#faf8f1');scene.fog=new THREE.Fog('#faf8f1',3.5,9);
    camera=new THREE.PerspectiveCamera(37,1,.1,30);camera.position.set(0,0,4.6);
-   veilTexture=new THREE.CanvasTexture(buffer);veilTexture.colorSpace=THREE.SRGBColorSpace;
+   veilTexture=new THREE.CanvasTexture(veilCanvas);veilTexture.colorSpace=THREE.SRGBColorSpace;
    for(let k=0;k<3;k++){
     const geometry=new THREE.PlaneGeometry(3.05,3.05,12,12);
     const material=new THREE.MeshBasicMaterial({map:veilTexture,transparent:true,opacity:k===0?.9:k===1?.29:.16,depthWrite:false,side:THREE.DoubleSide});
@@ -224,12 +227,22 @@ function PixelField({playing,onStats,canvasRef,musicRef,paletteRef,detailRef,liv
     pix[p+3]=255;
    }
    bc.putImageData(image,0,0);
+   if(veilContext&&veilImage&&frame%2===0){
+    const src=image.data,dst=veilImage.data;
+    for(let i=0;i<N*N;i++){
+     const p=i*4;
+     dst[p]=src[p];dst[p+1]=src[p+1];dst[p+2]=src[p+2];
+     dst[p+3]=Math.round(255*Math.min(.94,Math.max(0,(b[i]-.018)*2.6+history[i]*.3)));
+    }
+    veilContext.putImageData(veilImage,0,0);
+   }
    const width=target.clientWidth,height=target.clientHeight;
    ctx.fillStyle='#faf8f1';ctx.fillRect(0,0,width,height);
    const size=Math.min(width,height)*.98;
    if(renderer&&scene&&camera&&veilTexture&&frame%2===0){
     const scale=Math.min(1,Math.max(.4,Math.min(width,height)/700));
-    renderer.setSize(Math.max(1,Math.floor(width*scale)),Math.max(1,Math.floor(height*scale)),false);
+    const renderWidth=Math.max(1,Math.floor(width*scale)),renderHeight=Math.max(1,Math.floor(height*scale));
+    if(renderer.domElement.width!==renderWidth||renderer.domElement.height!==renderHeight)renderer.setSize(renderWidth,renderHeight,false);
     camera.aspect=width/Math.max(1,height);camera.updateProjectionMatrix();
     camera.position.x=Math.sin(elapsed*.045)*.22;
     camera.position.y=Math.cos(elapsed*.034)*.16;
