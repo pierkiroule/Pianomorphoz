@@ -109,7 +109,7 @@ function PixelField({playing,immersive,onStats,canvasRef,musicRef,paletteRef,det
   // Four translucent pictorial veils are projected at different depths.
   const veilLayers=4;
   let flight=0,flightMix=0;
-  let idlePainted=false;
+  let idlePainted=false,lastImmersive=immersiveRef.current;
   const resize=()=>{const r=target.getBoundingClientRect(),d=Math.min(window.devicePixelRatio||1,1.5);target.width=Math.max(1,Math.floor(r.width*d));target.height=Math.max(1,Math.floor(r.height*d));ctx.setTransform(d,0,0,d,0,0);ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality='high';};
   resize();window.addEventListener('resize',resize);
   const draw=(now:number)=>{
@@ -123,6 +123,7 @@ function PixelField({playing,immersive,onStats,canvasRef,musicRef,paletteRef,det
    const sounding=playingRef.current&&(active.length>0||audioActive||impulses.length>0);
    // Never animate without an input. Paint one still frame when sound ends,
    // then keep the exact pixels untouched until the next attack.
+   if(lastImmersive!==immersiveRef.current){idlePainted=false;lastImmersive=immersiveRef.current;}
    if(!sounding){
     if(idlePainted)return;
     idlePainted=true;
