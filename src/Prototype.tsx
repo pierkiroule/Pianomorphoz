@@ -1,130 +1,176 @@
 import {useEffect,useRef,useState} from 'react';
-import * as THREE from 'three';
 
-type Harmony={name:string;notes:number[];shape:number;twist:number;open:number;hue:number;energy:number};
-const score:Harmony[]=[
- {name:'Do majeur',notes:[48,60,64,67,72],shape:0,twist:.12,open:1.1,hue:.48,energy:.55},
- {name:'La mineur',notes:[45,57,60,64,69],shape:1,twist:-.28,open:.77,hue:.64,energy:.48},
- {name:'Fa majeur 7',notes:[53,57,60,64,69],shape:0,twist:.17,open:1.3,hue:.34,energy:.62},
- {name:'Sol suspendu',notes:[43,55,60,62,67],shape:2,twist:.65,open:1.1,hue:.55,energy:.43},
- {name:'Mi diminué',notes:[52,55,58,64,70],shape:3,twist:1.1,open:.7,hue:.77,energy:.77},
- {name:'La mineur 7',notes:[45,52,55,60,64],shape:1,twist:-.24,open:.82,hue:.64,energy:.53},
- {name:'Sol 7',notes:[43,53,59,62,67],shape:3,twist:.72,open:1,hue:.08,energy:.78},
- {name:'Do majeur',notes:[48,55,60,64,72],shape:0,twist:.12,open:1.35,hue:.48,energy:.64},
- {name:'Silence',notes:[],shape:2,twist:0,open:1.2,hue:.55,energy:0}
+type State={name:string;feed:number;kill:number;flow:number;hue:number};
+const SCORE:State[]=[
+ {name:'Do majeur · floraison',feed:.0367,kill:.0649,flow:.32,hue:.52},
+ {name:'La mineur · condensation',feed:.022,kill:.051,flow:.2,hue:.68},
+ {name:'Sol suspendu · suspension',feed:.03,kill:.062,flow:.13,hue:.56},
+ {name:'Mi diminué · turbulence',feed:.046,kill:.065,flow:.9,hue:.78},
+ {name:'Fa majeur 7 · ramification',feed:.028,kill:.062,flow:.48,hue:.35},
+ {name:'Silence · décantation',feed:.022,kill:.056,flow:.08,hue:.53}
 ];
-const clamp=THREE.MathUtils.clamp, TAU=Math.PI*2;
-function palette(pitch:number,hue:number){
- const h=(hue+(pitch%12)*.021)%1;
- return new THREE.Color().setHSL(h,.42,.58);
+const VERT=`#version 300 es
+precision highp float;
+out vec2 vUv;
+void main(){vec2 p=vec2((gl_VertexID<<1)&2,gl_VertexID&2);vUv=p*.5;gl_Position=vec4(p*2.-1.,0.,1.);}`;
+const SIM=`#version 300 es
+precision highp float;
+uniform sampler2D uPrev;
+uniform vec2 uPixel;
+uniform float uDt,uTime,uFeed,uKill,uFlow,uSeed;
+in vec2 vUv;out vec4 frag;
+vec2 readChem(vec2 uv){return texture(uPrev,fract(uv)).rg;}
+void main(){
+ vec2 uv=vUv;
+ vec2 vel=vec2(sin(uv.y*15.+uTime*.22)+cos(uv.x*9.-uTime*.17),cos(uv.x*13.+uTime*.2)-sin(uv.y*11.-uTime*.13));
+ uv=fract(uv-vel*uFlow*.00065);
+ vec2 c=readChem(uv);
+ vec2 dx=vec2(uPixel.x,0.),dy=vec2(0.,uPixel.y);
+ vec2 lap=-c;
+ lap+=.2*(readChem(uv+dx)+readChem(uv-dx)+readChem(uv+dy)+readChem(uv-dy));
+ lap+=.05*(readChem(uv+dx+dy)+readChem(uv+dx-dy)+readChem(uv-dx+dy)+readChem(uv-dx-dy));
+ float reaction=c.x*c.y*c.y;
+ float a=c.x+(.98*lap.x-reaction+uFeed*(1.-c.x))*uDt;
+ float b=c.y+(.48*lap.y+reaction-(uKill+uFeed)*c.y)*uDt;
+ // Sparse pigment injections act as musical gestures, never resetting the state.
+ vec2 point=vec2(.5+.23*cos(uTime*.37+uSeed*2.),.5+.21*sin(uTime*.29+uSeed*3.));
+ float dist=length((vUv-point)*vec2(1.,1.));
+ b+=.016*exp(-dist*dist/ .00032)*uDt;
+ frag=vec4(clamp(a,0.,1.),clamp(b,0.,1.),0.,1.);
+}`;
+const DISPLAY=`#version 300 es
+precision highp float;
+uniform sampler2D uTex;
+uniform vec2 uResolution;
+uniform float uHue,uTime;
+in vec2 vUv;out vec4 frag;
+vec3 palette(float x){
+ vec3 inkA=vec3(.065,.13,.16),inkB=vec3(.17,.35,.39),inkC=vec3(.56,.39,.26);
+ return mix(mix(inkA,inkB,clamp(uHue*1.2,0.,1.)),inkC,smoothstep(.55,.85,uHue)*.38+x*.15);
 }
-function LivingScene({playing,quality,onStep}:{playing:boolean;quality:number;onStep:(s:number,fps:number)=>void}){
- const canvas=useRef<HTMLCanvasElement>(null);
- const refs=useRef({playing,quality,onStep});refs.current={playing,quality,onStep};
+void main(){
+ vec2 uv=vUv;
+ float b=texture(uTex,uv).g;
+ vec2 px=1./uResolution;
+ float bx=texture(uTex,uv+vec2(px.x,0.)).g-texture(uTex,uv-vec2(px.x,0.)).g;
+ float by=texture(uTex,uv+vec2(0.,px.y)).g-texture(uTex,uv-vec2(0.,px.y)).g;
+ float edge=clamp(length(vec2(bx,by))*2.2,0.,1.);
+ float body=smoothstep(.055,.38,b);
+ float pigment=clamp(body*.8+edge*.5,0.,1.);
+ float grain=fract(sin(dot(gl_FragCoord.xy,vec2(12.9898,78.233)))*43758.5453);
+ vec3 paper=vec3(.987,.981,.963)+(grain-.5)*.012;
+ vec3 ink=palette(b);
+ vec3 col=mix(paper,ink,pigment*.94);
+ col=mix(col,vec3(.96,.83,.58),edge*.10);
+ frag=vec4(col,1.);
+}`;
+const BUTTON:React.CSSProperties={border:'1px solid #d8d9d3',background:'#fffdf5e8',borderRadius:20,padding:'10px 13px',fontWeight:600,color:'#304544'};
+function Simulation({playing,quality,onStatus}:{playing:boolean;quality:number;onStatus:(i:number,f:number)=>void}){
+ const ref=useRef<HTMLCanvasElement>(null),live=useRef({playing,quality,onStatus});live.current={playing,quality,onStatus};
  useEffect(()=>{
-  const el=canvas.current;if(!el)return;
-  const scene=new THREE.Scene();scene.background=new THREE.Color('#fbfaf7');
-  scene.fog=new THREE.FogExp2('#fbfaf7',.014);
-  const camera=new THREE.PerspectiveCamera(77,1,.08,170);
-  const renderer=new THREE.WebGLRenderer({canvas:el,alpha:false,antialias:false,powerPreference:'high-performance'});
-  renderer.outputColorSpace=THREE.SRGBColorSpace;
-  const strands:{mesh:THREE.Mesh;arr:Float32Array;mat:THREE.MeshBasicMaterial;index:number}[]=[];
-  const COUNT=12,STEPS=88;
-  for(let n=0;n<COUNT;n++){
-   const arr=new Float32Array((STEPS+1)*2*3),colors=new Float32Array(arr.length),idx:number[]=[];
-   for(let j=0;j<STEPS;j++){const k=j*2;idx.push(k,k+1,k+2,k+1,k+3,k+2);}
-   const geometry=new THREE.BufferGeometry();
-   geometry.setAttribute('position',new THREE.BufferAttribute(arr,3).setUsage(THREE.DynamicDrawUsage));
-   geometry.setAttribute('color',new THREE.BufferAttribute(colors,3).setUsage(THREE.DynamicDrawUsage));geometry.setIndex(idx);
-   const mat=new THREE.MeshBasicMaterial({vertexColors:true,side:THREE.DoubleSide,transparent:true,depthWrite:false,opacity:.8});
-   const mesh=new THREE.Mesh(geometry,mat);mesh.frustumCulled=false;scene.add(mesh);strands.push({mesh,arr,mat,index:n});
-  }
-  let raf=0,last=performance.now(),time=0,travel=0,smoothed=0,frames=0,frameClock=last,fps=60;
-  const resize=()=>{const w=el.clientWidth||innerWidth,h=el.clientHeight||innerHeight;renderer.setPixelRatio(Math.min(devicePixelRatio||1,refs.current.quality));renderer.setSize(w,h,false);camera.aspect=w/h;camera.updateProjectionMatrix();};
-  resize();addEventListener('resize',resize);
-  const center=(z:number,shape:number,twist:number)=>new THREE.Vector3(Math.sin(z*.065+twist*.5)*(.85+shape*.13),Math.cos(z*.047+shape*.3)*.65+Math.sin(z*.023)*.55,z);
-  const animate=(now:number)=>{
-   raf=requestAnimationFrame(animate);
-   const dt=Math.min(.04,(now-last)/1000);last=now;
-   if(refs.current.playing)time+=dt;
-   const beat=3.5;const slot=Math.floor(time/beat)%score.length;const next=(slot+1)%score.length;
-   const phase=(time%beat)/beat;
-   const ease=(v:number)=>v*v*(3-2*v);
-   const mix=ease(clamp((phase-.65)/.35,0,1));
-   const a=score[slot],b=score[next];
-   const open=THREE.MathUtils.lerp(a.open,b.open,mix);
-   const twist=THREE.MathUtils.lerp(a.twist,b.twist,mix);
-   const shape=THREE.MathUtils.lerp(a.shape,b.shape,mix);
-   const energy=THREE.MathUtils.lerp(a.energy,b.energy,mix);
-   const notes=new Set([...a.notes,...b.notes].map(n=>n%12));
-   smoothed+=(energy-smoothed)*Math.min(1,dt*2.5);
-   travel+=dt*(2.4+smoothed*2.1)*(refs.current.playing?1:.16);
-   const zCam=-travel,cc=center(zCam,shape,twist),look=center(zCam-8,shape,twist);
-   camera.position.lerp(new THREE.Vector3(cc.x,cc.y,zCam+1.3),Math.min(1,dt*3.3));
-   camera.lookAt(look);
-   camera.rotation.z=Math.sin(zCam*.05+twist)*.055;
-   for(const s of strands){
-    const n=s.index,pa=a.notes.filter(p=>p%12===n),pb=b.notes.filter(p=>p%12===n);
-    const weight=THREE.MathUtils.lerp(pa.length?1:0,pb.length?1:0,mix);
-    const isOn=notes.has(n)&&weight>.008;
-    s.mesh.visible=isOn;
-    if(!isOn)continue;
-    const pitch=(pa[0]??pb[0]??60);
-    const base=palette(pitch,THREE.MathUtils.lerp(a.hue,b.hue,mix));
-    const bright=base.clone().lerp(new THREE.Color('#fff4df'),.16+smoothed*.18);
-    const glow=weight*(.35+.65*smoothed);
-    s.mat.opacity=clamp(.15+glow*.68,0,.94);
-    const theta=n/COUNT*TAU;
-    for(let j=0;j<=STEPS;j++){
-     const f=j/STEPS,z=zCam-2-f*92;
-     const bend=theta+twist*f*2.8+Math.sin(f*7+time*.28+n*.6)*.12;
-     const c=center(z,shape,twist);
-     const radius=(1.6+open*1.12)*(1+.11*Math.sin(f*TAU*2+time*.35+n));
-     const wobble=.08*Math.sin(f*21+time*1.3+n*1.7);
-     const x=c.x+Math.cos(bend)*(radius+wobble),y=c.y+Math.sin(bend)*(radius+wobble);
-     const gaps=Math.sin(f*TAU*(4+n%3)+n*2.6);
-     const visible=gaps>-.62?1:0;
-     const feather=Math.pow(Math.sin(Math.PI*f),.5);
-     const width=(.009+.045*glow)*feather*visible*(1+.24*Math.sin(f*35+n));
-     const k=j*6;
-     s.arr[k]=x-Math.sin(bend)*width;s.arr[k+1]=y+Math.cos(bend)*width;s.arr[k+2]=z;
-     s.arr[k+3]=x+Math.sin(bend)*width;s.arr[k+4]=y-Math.cos(bend)*width;s.arr[k+5]=z;
-     const color=bright.clone().multiplyScalar(.7+.3*Math.sin(f*9+time*.8+n)**2);
-     const colors=s.mesh.geometry.getAttribute('color') as THREE.BufferAttribute;
-     for(let q=0;q<2;q++){colors.setXYZ(j*2+q,color.r,color.g,color.b);}
-    }
-    s.mesh.geometry.attributes.position.needsUpdate=true;
-    s.mesh.geometry.attributes.color.needsUpdate=true;
-   }
-   renderer.render(scene,camera);
-   frames++;if(now-frameClock>1000){fps=Math.round(frames*1000/(now-frameClock));frames=0;frameClock=now;}
-   if(Math.floor(now/250)!==Math.floor((now-dt*1000)/250))refs.current.onStep(slot,fps);
+  const canvas=ref.current;if(!canvas)return;
+  const gl=canvas.getContext('webgl2',{alpha:false,antialias:false,preserveDrawingBuffer:false});
+  if(!gl)return;
+  const ext=gl.getExtension('EXT_color_buffer_float');
+  if(!ext){console.warn('Floating point render targets unavailable');return;}
+  const compile=(kind:number,source:string)=>{
+   const sh=gl.createShader(kind);if(!sh)throw Error('shader allocation');
+   gl.shaderSource(sh,source);gl.compileShader(sh);
+   if(!gl.getShaderParameter(sh,gl.COMPILE_STATUS))throw Error(gl.getShaderInfoLog(sh)||'shader compilation');
+   return sh;
   };
-  raf=requestAnimationFrame(animate);
-  return()=>{cancelAnimationFrame(raf);removeEventListener('resize',resize);for(const s of strands){s.mesh.geometry.dispose();s.mat.dispose();}renderer.dispose();};
+  const program=(frag:string)=>{
+   const p=gl.createProgram();if(!p)throw Error('program allocation');
+   const vs=compile(gl.VERTEX_SHADER,VERT),fs=compile(gl.FRAGMENT_SHADER,frag);
+   gl.attachShader(p,vs);gl.attachShader(p,fs);gl.linkProgram(p);
+   gl.deleteShader(vs);gl.deleteShader(fs);
+   if(!gl.getProgramParameter(p,gl.LINK_STATUS))throw Error(gl.getProgramInfoLog(p)||'link');
+   return p;
+  };
+  const sim=program(SIM),display=program(DISPLAY),vao=gl.createVertexArray();gl.bindVertexArray(vao);
+  const N=256;
+  const targets:Array<{tex:WebGLTexture;fbo:WebGLFramebuffer}>=[];
+  for(let k=0;k<2;k++){
+   const tex=gl.createTexture(),fbo=gl.createFramebuffer();if(!tex||!fbo)throw Error('texture allocation');
+   gl.bindTexture(gl.TEXTURE_2D,tex);
+   gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);
+   gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+   gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.REPEAT);
+   gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.REPEAT);
+   const data=new Float32Array(N*N*4);
+   for(let y=0;y<N;y++)for(let x=0;x<N;x++){
+    const p=(y*N+x)*4,dx=(x-N/2)/N,dy=(y-N/2)/N;
+    const r=Math.sqrt(dx*dx+dy*dy),angle=Math.atan2(dy,dx);
+    const rings=Math.sin(r*135+angle*7)*.5+.5;
+    data[p]=1;data[p+1]=(r<.12&&rings>.4)?(.7+.2*rings):0;data[p+3]=1;
+   }
+   gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA32F,N,N,0,gl.RGBA,gl.FLOAT,data);
+   gl.bindFramebuffer(gl.FRAMEBUFFER,fbo);gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,tex,0);
+   if(gl.checkFramebufferStatus(gl.FRAMEBUFFER)!==gl.FRAMEBUFFER_COMPLETE)throw Error('framebuffer incomplete');
+   targets.push({tex,fbo});
+  }
+  gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+  const loc=(p:WebGLProgram,n:string)=>gl.getUniformLocation(p,n);
+  const s={prev:loc(sim,'uPrev'),pixel:loc(sim,'uPixel'),dt:loc(sim,'uDt'),time:loc(sim,'uTime'),feed:loc(sim,'uFeed'),kill:loc(sim,'uKill'),flow:loc(sim,'uFlow'),seed:loc(sim,'uSeed')};
+  const d={tex:loc(display,'uTex'),res:loc(display,'uResolution'),hue:loc(display,'uHue'),time:loc(display,'uTime')};
+  let index=0,raf=0,last=performance.now(),time=0,frames=0,fps=60,clock=last,lastStatus=0,applied=-1;
+  const resize=()=>{
+   const r=canvas.getBoundingClientRect(),q=Math.min(window.devicePixelRatio||1,live.current.quality);
+   canvas.width=Math.max(1,Math.floor(r.width*q));canvas.height=Math.max(1,Math.floor(r.height*q));applied=live.current.quality;
+  };
+  resize();window.addEventListener('resize',resize);
+  const render=(now:number)=>{
+   raf=requestAnimationFrame(render);
+   const dt=Math.min(.045,(now-last)/1000);last=now;
+   if(live.current.playing)time+=dt;
+   if(applied!==live.current.quality)resize();
+   const duration=6,step=Math.floor(time/duration)%SCORE.length;
+   const phase=(time%duration)/duration,x=Math.max(0,Math.min(1,(phase-.6)/.4)),blend=x*x*(3-2*x);
+   const a=SCORE[step],b=SCORE[(step+1)%SCORE.length];
+   const mix=(key:'feed'|'kill'|'flow'|'hue')=>a[key]*(1-blend)+b[key]*blend;
+   if(live.current.playing){
+    gl.useProgram(sim);gl.viewport(0,0,N,N);gl.uniform1i(s.prev,0);
+    gl.uniform2f(s.pixel,1/N,1/N);gl.uniform1f(s.time,time);
+    gl.uniform1f(s.feed,mix('feed'));gl.uniform1f(s.kill,mix('kill'));gl.uniform1f(s.flow,mix('flow'));gl.uniform1f(s.seed,step);
+    for(let i=0;i<5;i++){
+     gl.bindFramebuffer(gl.FRAMEBUFFER,targets[1-index].fbo);
+     gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,targets[index].tex);
+     gl.uniform1f(s.dt,1);gl.drawArrays(gl.TRIANGLES,0,3);index=1-index;
+    }
+   }
+   gl.bindFramebuffer(gl.FRAMEBUFFER,null);gl.viewport(0,0,canvas.width,canvas.height);
+   gl.useProgram(display);gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,targets[index].tex);
+   gl.uniform1i(d.tex,0);gl.uniform2f(d.res,1/N,1/N);gl.uniform1f(d.hue,mix('hue'));gl.uniform1f(d.time,time);
+   gl.drawArrays(gl.TRIANGLES,0,3);
+   frames++;if(now-clock>1000){fps=Math.round(frames*1000/(now-clock));frames=0;clock=now;}
+   if(now-lastStatus>300){lastStatus=now;live.current.onStatus(step,fps);}
+  };
+  raf=requestAnimationFrame(render);
+  return()=>{cancelAnimationFrame(raf);window.removeEventListener('resize',resize);targets.forEach(t=>{gl.deleteTexture(t.tex);gl.deleteFramebuffer(t.fbo);});gl.deleteVertexArray(vao);gl.deleteProgram(sim);gl.deleteProgram(display);};
  },[]);
- return <canvas ref={canvas} style={{position:'absolute',inset:0,width:'100%',height:'100%',display:'block'}}/>;
+ return <canvas ref={ref} style={{position:'absolute',inset:0,width:'100%',height:'100%',display:'block'}}/>;
 }
 export default function Prototype(){
- const [playing,setPlaying]=useState(true),[step,setStep]=useState(0),[fps,setFps]=useState(0),[quality,setQuality]=useState(1.25),[info,setInfo]=useState(false);
- return <main style={{position:'fixed',inset:0,background:'#fbfaf7',color:'#283b3a',fontFamily:'system-ui,sans-serif',overflow:'hidden'}}>
-  <LivingScene playing={playing} quality={quality} onStep={(s,f)=>{setStep(s);setFps(f);}}/>
-  <div style={{position:'absolute',top:16,left:18,right:18,display:'flex',justifyContent:'space-between',alignItems:'start',pointerEvents:'none'}}>
-   <div style={{background:'#fbfaf7b8',padding:'8px 12px',borderRadius:16,backdropFilter:'blur(8px)'}}><div style={{fontSize:12,letterSpacing:2,fontWeight:700}}>PIANO ROLL COASTER •°</div><div style={{fontSize:11,opacity:.7}}>Laboratoire morphogenèse musicale</div></div>
-   <div style={{background:'#fbfaf7b8',padding:'8px 12px',borderRadius:16,fontSize:12}}>{fps} FPS</div>
-  </div>
-  <div style={{position:'absolute',bottom:20,left:16,right:16,display:'flex',alignItems:'center',justifyContent:'space-between',gap:10}}>
-   <div style={{background:'#fbfaf7c9',backdropFilter:'blur(12px)',padding:'11px 14px',borderRadius:20,minWidth:120}}><div style={{fontSize:10,opacity:.65}}>HARMONIE</div><strong style={{fontSize:14}}>{score[step]?.name}</strong></div>
-   <div style={{display:'flex',gap:8}}>
-    <button onClick={()=>setPlaying(p=>!p)} style={btn}>{playing?'Ⅱ Pause':'▶ Voyage'}</button>
-    <button onClick={()=>setInfo(v=>!v)} style={btn}>⚙</button>
+ const [playing,setPlaying]=useState(true),[quality,setQuality]=useState(1),[step,setStep]=useState(0),[fps,setFps]=useState(0),[settings,setSettings]=useState(false);
+ return <main style={{position:'fixed',inset:0,overflow:'hidden',background:'#fbfaf6',fontFamily:'system-ui,sans-serif',color:'#304543'}}>
+  <Simulation playing={playing} quality={quality} onStatus={(i,f)=>{setStep(i);setFps(f);}}/>
+  <div style={{position:'absolute',top:15,left:15,right:15,display:'flex',justifyContent:'space-between',pointerEvents:'none'}}>
+   <div style={{padding:'10px 13px',background:'#fffdf6d5',borderRadius:15,backdropFilter:'blur(8px)'}}>
+    <strong style={{fontSize:12,letterSpacing:1.3}}>PIXEL VIVANT •°</strong>
+    <div style={{fontSize:11,opacity:.7}}>Réaction-diffusion · GPU · V5</div>
    </div>
+   <div style={{padding:11,background:'#fffdf6d5',borderRadius:13,fontSize:12}}>{fps} FPS</div>
   </div>
-  {info&&<div style={{position:'absolute',right:16,bottom:85,background:'#fffef0ed',padding:18,borderRadius:18,width:250,boxShadow:'0 12px 45px #3452'}}>
-   <strong>Prototype visuel</strong><p style={{fontSize:12,lineHeight:1.5}}>Séquence harmonique simulée. 12 fibres réutilisées, trajectoire FPV, morphologies par accords. Sans MIDI, audio ni enregistrement.</p>
-   <label style={{fontSize:12}}>Résolution GPU : {quality.toFixed(2)}×<input style={{width:'100%'}} type="range" min=".65" max="1.5" step=".05" value={quality} onChange={e=>setQuality(Number(e.target.value))}/></label>
-   <button style={{...btn,marginTop:8}} onClick={()=>setInfo(false)}>Fermer</button>
+  <div style={{position:'absolute',bottom:16,left:15,right:15,display:'flex',justifyContent:'space-between',alignItems:'center',gap:8}}>
+   <div style={{padding:'10px 13px',background:'#fffdf6e9',borderRadius:15}}>
+    <div style={{fontSize:10,opacity:.65}}>HARMONIE</div><strong style={{fontSize:13}}>{SCORE[step].name}</strong>
+   </div>
+   <div style={{display:'flex',gap:7}}><button style={BUTTON} onClick={()=>setPlaying(v=>!v)}>{playing?'Ⅱ Pause':'▶ Reprendre'}</button><button style={BUTTON} onClick={()=>setSettings(v=>!v)}>⚙</button></div>
+  </div>
+  {settings&&<div style={{position:'absolute',right:15,bottom:80,padding:16,width:245,maxWidth:'calc(100vw - 30px)',background:'#fffdf6f4',borderRadius:17,boxShadow:'0 8px 30px #3453'}}>
+   <strong>Laboratoire pixel</strong><p style={{fontSize:12,lineHeight:1.5}}>Simulation Gray–Scott 256×256, advection légère, injection de pigment et mémoire des états. WebGL2 requis. Accords simulés.</p>
+   <label style={{fontSize:12}}>Résolution {quality.toFixed(2)}×<input style={{width:'100%'}} type="range" min=".5" max="1.5" step=".05" value={quality} onChange={e=>setQuality(Number(e.target.value))}/></label>
+   <button style={{...BUTTON,marginTop:8}} onClick={()=>setSettings(false)}>Fermer</button>
   </div>}
  </main>;
 }
-const btn:React.CSSProperties={border:'1px solid #dae1dc',borderRadius:25,background:'#ffffffd9',color:'#244441',padding:'12px 17px',fontWeight:650,fontSize:13,backdropFilter:'blur(10px)'};
