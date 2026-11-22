@@ -93,8 +93,8 @@ function Simulation({playing,quality,onStatus}:{playing:boolean;quality:number;o
   for(let k=0;k<2;k++){
    const tex=gl.createTexture(),fbo=gl.createFramebuffer();if(!tex||!fbo)throw Error('texture allocation');
    gl.bindTexture(gl.TEXTURE_2D,tex);
-   gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);
-   gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+   gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST);
+   gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);
    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.REPEAT);
    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.REPEAT);
    const data=new Float32Array(N*N*4);
