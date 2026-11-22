@@ -366,7 +366,7 @@ export default function Prototype(){
     <label style={{display:'block',marginTop:12}}>Palette<select style={{width:'100%'}} value={palette} onChange={e=>{const v=Number(e.target.value);setPalette(v);paletteRef.current=v;}}>{PALETTES.map((p,i)=><option key={p.name} value={i}>{p.name}</option>)}</select></label>
     <label style={{display:'block',marginTop:12}}>Détails · {Math.round(detail*100)} %<input style={{width:'100%'}} type='range' min='.2' max='1' step='.1' value={detail} onChange={e=>{const v=Number(e.target.value);setDetail(v);detailRef.current=v;}}/></label>
    </details>
-   <button style={{...buttonStyle,marginTop:12}} onClick={captureImage}}>Exporter PNG</button>
+   <button style={{...buttonStyle,marginTop:12}} onClick={captureImage}>Exporter PNG</button>
    <h3>Production audiovisuelle</h3>
    <p>Sélectionner l'entrée audio USB ou le micro. Puis utiliser « Vidéo » pour enregistrer l'image et le son ensemble.</p>
    <button style={buttonStyle} onClick={selectAudio}>Choisir la source audio</button>
