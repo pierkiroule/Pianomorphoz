@@ -166,7 +166,7 @@ function PixelField({playing,onStats,canvasRef,musicRef,paletteRef,detailRef,liv
  return <canvas ref={canvas} style={{position:'absolute',inset:0,width:'100%',height:'100%',display:'block'}}/>;
 }
 export default function Prototype(){
- const [playing,setPlaying]=useState(true),[step,setStep]=useState(0),[fps,setFps]=useState(0);
+ const [uiVisible,setUiVisible]=useState(true),[playing,setPlaying]=useState(true),[step,setStep]=useState(0),[fps,setFps]=useState(0);
  const [living,setLiving]=useState<LivingSettings>(DEFAULT_LIVING),[palette,setPalette]=useState(0),[detail,setDetail]=useState(1),[previewOpen,setPreviewOpen]=useState(false),[captureSeconds,setCaptureSeconds]=useState(0);
  const livingRef=useRef<LivingSettings>({...DEFAULT_LIVING}),paletteRef=useRef(0),detailRef=useRef(1),recordStart=useRef(0),captureClock=useRef<number|null>(null);
  const [midiStatus,setMidiStatus]=useState('Démo automatique'),[recording,setRecording]=useState(false),[recorded,setRecorded]=useState('');
@@ -271,17 +271,18 @@ export default function Prototype(){
  }
  return <main style={{position:'fixed',inset:0,overflow:'hidden',background:'#faf8f1',fontFamily:'system-ui,sans-serif',color:'#284044'}}>
   <PixelField playing={playing} canvasRef={canvasRef} musicRef={musicRef} paletteRef={paletteRef} detailRef={detailRef} livingRef={livingRef} onStats={(s,f)=>{setStep(s);setFps(f);}}/>
-  <div style={{position:'absolute',top:14,left:14,right:14,display:'flex',justifyContent:'space-between',pointerEvents:'none'}}>
-   <div style={{padding:'10px 13px',borderRadius:15,background:'#fffdf6e0'}}><strong style={{fontSize:12,letterSpacing:1}}>AQUARELLE VIVANTE •°</strong><div style={{fontSize:11,opacity:.7}}>V9 · filtres vivants résonants</div></div>
-   <div style={{fontSize:12,padding:11,borderRadius:15,background:'#fffdf6e0'}}>{fps} FPS</div>
-  </div>
-  <div style={{position:'absolute',bottom:16,left:14,right:14,display:'flex',alignItems:'center',justifyContent:'space-between',gap:10}}>
-   <div style={{background:'#fffdf6ed',borderRadius:15,padding:'10px 13px'}}><div style={{fontSize:10,opacity:.6}}>{musicRef.current.connected?'HARMONIE MIDI':'HARMONIE SIMULÉE'}</div><strong style={{fontSize:13}}>{STATES[step].name}</strong></div>
-   <div style={{display:'flex',gap:6,flexWrap:'wrap',justifyContent:'flex-end'}}><button style={buttonStyle} onClick={connectMidi}>MIDI</button><button style={buttonStyle} onClick={selectAudio}>Audio</button><button style={buttonStyle} onClick={toggleRecording}>{recording?'■ Stop vidéo':'● Vidéo'}</button><button style={buttonStyle} onClick={()=>setPlaying(v=>!v)}>{playing?'Ⅱ':'▶'}</button></div>
-  </div>
-  <div style={{position:'absolute',top:70,left:14,fontSize:11,background:'#fffdf6d9',padding:'5px 9px',borderRadius:10}}>{midiStatus} · <button onClick={()=>setPanel(v=>!v)} style={{...buttonStyle,padding:'4px 9px'}}> {panel?'Fermer':'Studio'} </button></div>
-  {panel&&<section style={{position:'absolute',top:105,right:12,bottom:105,width:'min(350px,calc(100vw - 24px))',overflowY:'auto',background:'#fffdf6f5',border:'1px solid #d4dcd5',borderRadius:20,padding:16,boxShadow:'0 8px 40px #2442',fontSize:13,zIndex:5}}>
-   <h2 style={{margin:'0 0 10px',fontSize:17}}>Studio · matière vivante</h2>
+  <button aria-label={uiVisible?'Masquer les commandes':'Afficher les commandes'} title={uiVisible?'Mode immersion':'Afficher les commandes'} onClick={()=>{setUiVisible(v=>!v);setPanel(false);}} style={{...buttonStyle,position:'absolute',top:12,right:12,zIndex:12,padding:'9px 12px',fontSize:12,background:'#fffdf6c9',backdropFilter:'blur(12px)'}}>{uiVisible?'◌ Immersion':'☷'}</button>
+  {uiVisible&&<div style={{position:'absolute',top:12,left:12,zIndex:4,background:'#fffdf6b8',backdropFilter:'blur(12px)',borderRadius:14,padding:'7px 11px',fontSize:11,pointerEvents:'none'}}>
+   <strong>PIANOMORPHOZ •°</strong><span style={{opacity:.6}}> · {STATES[step].name}</span>
+  </div>}
+  {uiVisible&&<div style={{position:'absolute',bottom:'max(12px,env(safe-area-inset-bottom))',left:'50%',transform:'translateX(-50%)',display:'flex',alignItems:'center',gap:6,zIndex:8,background:'#fffdf6ce',backdropFilter:'blur(16px)',border:'1px solid #d5dbd4',padding:6,borderRadius:28,boxShadow:'0 6px 24px #20322a20',maxWidth:'calc(100vw - 20px)'}}>
+   <button style={{...buttonStyle,padding:'9px 12px'}} onClick={()=>setPanel(v=>!v)} aria-label="Réglages du studio" title="Atelier et réglages">☷ Atelier</button>
+   <button style={{...buttonStyle,padding:'9px 12px'}} onClick={()=>setPlaying(v=>!v)} aria-label={playing?'Pause':'Lecture'}>{playing?'Ⅱ':'▶'}</button>
+   <button style={{...buttonStyle,padding:'9px 12px',color:recording?'#a71935':undefined}} onClick={toggleRecording} aria-label={recording?'Arrêter la vidéo':'Enregistrer une vidéo'}>{recording?'■ Stop':'● REC'}</button>
+   {recorded&&!recording&&<button style={{...buttonStyle,padding:'9px 12px'}} onClick={()=>setPreviewOpen(true)} title="Prévisualiser la dernière capture">▶ Voir</button>}
+  </div>}
+  {panel&&uiVisible&&<section style={{position:'absolute',top:55,right:12,bottom:75,width:'min(350px,calc(100vw - 24px))',overflowY:'auto',background:'#fffdf6f5',border:'1px solid #d4dcd5',borderRadius:20,padding:16,boxShadow:'0 8px 40px #2442',fontSize:13,zIndex:5}}>
+   <div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}><h2 style={{margin:'0 0 10px',fontSize:17}}>Atelier pictural</h2><button style={{...buttonStyle,padding:'5px 10px'}} onClick={()=>setPanel(false)} aria-label='Fermer les réglages'>✕</button></div>
    <p>Le piano pilote directement l'encre. Les prises MIDI sont conservées sur cet appareil.</p>
    <button style={buttonStyle} onClick={connectMidi}>Connecter le piano MIDI</button>
    {midiInputs.length>0&&<label style={{display:'block',marginTop:10}}>Entrée MIDI<select style={{width:'100%'}} value={midiInput} onChange={e=>bindMidi(midiAccessRef.current!,e.target.value)}>{midiInputs.map(d=><option key={d.id} value={d.id}>{d.name}</option>)}</select></label>}
@@ -307,10 +308,7 @@ export default function Prototype(){
    {recorded&&<button style={buttonStyle} onClick={()=>setPreviewOpen(true)}>▶ Prévisualiser la capture</button>}
    <p style={{fontSize:11}}>Pour le mastering WAV et le montage avancé : <a href='?studio=1'>outils historiques</a>.</p>
   </section>}
-  {devices.length>0&&<div style={{position:'absolute',top:100,left:14,background:'#fffdf6ed',padding:8,borderRadius:12,maxWidth:'85vw'}}><label style={{fontSize:11}}>Source audio <select value={deviceId} onChange={e=>setDeviceId(e.target.value)}><option value=''>Microphone par défaut</option>{devices.map(d=><option key={d.deviceId} value={d.deviceId}>{d.label||'Entrée audio'}</option>)}</select></label></div>}
-  {recordStatus&&<div style={{position:'absolute',top:150,left:14,fontSize:11,background:'#fffdf6ed',padding:'5px 9px',borderRadius:9,maxWidth:'80vw'}}>{recordStatus}</div>}
   {recording&&<div style={{position:'absolute',top:14,left:'50%',transform:'translateX(-50%)',background:'#8d2335',color:'white',borderRadius:30,padding:'8px 16px',fontSize:12,fontWeight:700}}>● REC {Math.floor(captureSeconds/60).toString().padStart(2,'0')}:{(captureSeconds%60).toString().padStart(2,'0')}</div>}
   {previewOpen&&recorded&&<div style={{position:'absolute',inset:0,zIndex:20,background:'#182122e8',display:'flex',alignItems:'center',justifyContent:'center',padding:16}}><div style={{width:'min(760px,96vw)',background:'#fffdf6',padding:16,borderRadius:20}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}><strong>Prévisualisation de la prise</strong><button style={buttonStyle} onClick={()=>setPreviewOpen(false)}>Fermer</button></div><video src={recorded} controls playsInline style={{width:'100%',maxHeight:'65vh',background:'#000',borderRadius:10}}/><div style={{display:'flex',gap:10,marginTop:12}}><a style={{...buttonStyle,textDecoration:'none'}} href={recorded} download={'pianomorphoz-capture.'+(recorded&&recorderRef.current?.mimeType.includes('mp4')?'mp4':'webm')}>Télécharger la vidéo</a></div></div></div>}
-  {recorded&&<a href={recorded} download={'aquarelle-vivante-'+Date.now()+'.webm'} style={{position:'absolute',top:185,left:14,...buttonStyle,textDecoration:'none',fontSize:12}}>Télécharger la vidéo WebM</a>}
  </main>;
 }
