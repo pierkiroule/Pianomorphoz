@@ -1,3 +1,4 @@
+import SumiResonance from './SumiResonance';
 import {useEffect,useRef,useState} from 'react';
 import {MidiRecorder} from './coaster/midi';
 import type {MidiSession} from './coaster/midi';
@@ -480,7 +481,7 @@ export default function Prototype(){
   }catch(error){setRecordStatus('Enregistrement : '+String(error));setRecording(false);}
  }
  return <main style={{position:'fixed',inset:0,overflow:'hidden',background:'#faf8f1',fontFamily:'system-ui,sans-serif',color:'#284044'}}>
-  <PixelField playing={playing} immersive={!uiVisible} canvasRef={canvasRef} musicRef={musicRef} paletteRef={paletteRef} detailRef={detailRef} livingRef={livingRef} onStats={()=>{}}/>
+  <SumiResonance playing={playing} canvasRef={canvasRef} musicRef={musicRef}/>
   {!hasGesture&&<div style={{position:'absolute',top:'44%',left:'50%',transform:'translate(-50%,-50%)',zIndex:3,textAlign:'center',pointerEvents:'none',color:'#486160',width:'min(90vw,360px)'}}><div style={{fontSize:22,fontWeight:300,letterSpacing:'.06em'}}>La toile attend une note.</div><div style={{fontSize:12,marginTop:9,opacity:.7}}>Jouez du piano ou essayez une goutte.</div></div>}
   {uiVisible&&<button onClick={testDrop} style={{...buttonStyle,position:'absolute',top:58,left:12,zIndex:10,fontSize:12,padding:'8px 13px'}}>＋ Une goutte test</button>}
   <button aria-label={uiVisible?'Masquer les commandes':'Afficher les commandes'} title={uiVisible?'Mode immersion':'Afficher les commandes'} onClick={()=>{setUiVisible(v=>!v);setPanel(false);}} style={{...buttonStyle,position:'absolute',top:12,right:12,zIndex:12,padding:'9px 12px',fontSize:12,background:'#fffdf6c9',backdropFilter:'blur(12px)'}}>{uiVisible?'◌ Immersion':'☷'}</button>
