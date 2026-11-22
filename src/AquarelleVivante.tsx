@@ -109,29 +109,39 @@ function PixelField({playing,immersive,onStats,canvasRef,musicRef,paletteRef,det
   // Four translucent pictorial veils are projected at different depths.
   const veilLayers=4;
   let flight=0,flightMix=0;
-  let idlePainted=false,lastImmersive=immersiveRef.current;
+  let idlePainted=false,lastImmersive=immersiveRef.current,lastAttack=-Infinity,hasPaint=false;
   const resize=()=>{const r=target.getBoundingClientRect(),d=Math.min(window.devicePixelRatio||1,1.5);target.width=Math.max(1,Math.floor(r.width*d));target.height=Math.max(1,Math.floor(r.height*d));ctx.setTransform(d,0,0,d,0,0);ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality='high';};
   resize();window.addEventListener('resize',resize);
   const draw=(now:number)=>{
    raf=requestAnimationFrame(draw);
    const dt=Math.min(.05,(now-last)/1000);last=now;
-   // Musical time is frozen during silence, including the FPV camera.
-   if(playingRef.current&&(musicRef.current.notes.size>0||musicRef.current.audioEnergy>.065||musicRef.current.impulses.length>0))elapsed+=dt;
    const active=[...musicRef.current.notes.entries()];
    const impulses=playingRef.current?musicRef.current.impulses.splice(0,48):[];
-   const audioActive=musicRef.current.audioEnergy>.065;
-   const sounding=playingRef.current&&(active.length>0||audioActive||impulses.length>0);
-   // Never animate without an input. Paint one still frame when sound ends,
-   // then keep the exact pixels untouched until the next attack.
+   if(impulses.length){lastAttack=now;hasPaint=true;}
+   // Only verified musical attacks unlock the animation. Raw microphone RMS
+   // and stale MIDI note-on state must never start an autonomous animation.
+   const recentAttack=now-lastAttack<900;
+   const sounding=playingRef.current&&recentAttack;
    if(lastImmersive!==immersiveRef.current){idlePainted=false;lastImmersive=immersiveRef.current;}
+   if(!hasPaint){
+    if(!idlePainted){
+     ctx.fillStyle='#faf8f1';
+     ctx.fillRect(0,0,target.clientWidth,target.clientHeight);
+     idlePainted=true;
+    }
+    return;
+   }
    if(!sounding){
     if(idlePainted)return;
     idlePainted=true;
-   }else idlePainted=false;
+   }else{
+    idlePainted=false;
+    elapsed+=dt;
+   }
 
    const perception=grammar.observe(impulses,now,active.length,musicRef.current.audioEnergy);
    // Energy is supplied by actual gestures/audio, never by a demo timer.
-   const input=Math.min(1,impulses.reduce((s,e)=>s+e.velocity/127,0)*.27+musicRef.current.audioEnergy*.48);
+   const input=Math.min(1,impulses.reduce((s,e)=>s+e.velocity/127,0)*.27+(sounding?musicRef.current.audioEnergy*.48:0));
    reservoir=Math.min(1.6,Math.max(0,reservoir*Math.exp(-dt*.24)+input*.42));
    inkBudget=Math.min(1.2,Math.max(0,inkBudget*Math.exp(-dt*.11)+input*.3));
 
@@ -145,7 +155,7 @@ function PixelField({playing,immersive,onStats,canvasRef,musicRef,paletteRef,det
    const midiStep=major?0:minor?1:diminished?3:suspended?2:pitches.length?4:5;
    const step=musicRef.current.connected?midiStep:5;
    const state=STATES[step];
-   const energy=Math.min(1,perception.energy*.45+reservoir*.35+musicRef.current.audioEnergy*.8);
+   const energy=sounding?Math.min(1,perception.energy*.45+reservoir*.35+musicRef.current.audioEnergy*.8):0;
    const register=pitches.length?pitches.reduce((s,n)=>s+n,0)/pitches.length:60;
    const registerBias=(register-60)/48;
    const palette=PALETTES[paletteRef.current]||PALETTES[0];
