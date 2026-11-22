@@ -18,3 +18,7 @@
 .coaster-panel button{background:rgba(255,255,255,.65)}
 .coaster-panel button.primary{background:rgba(49,94,100,.85)}
 @media(max-width:600px){.coaster-panel{bottom:calc(59px + env(safe-area-inset-bottom));max-height:35vh;top:auto;padding:10px}.coaster-nav button{padding:7px 8px;font-size:10px}.coaster-toggle{top:55px;right:8px}.coaster-header{padding:9px 10px}.coaster-header small{display:none}}
+
+.coaster-float-controls{position:absolute;top:60px;right:12px;z-index:9;display:flex;gap:6px}
+.coaster-float-controls button{position:static;background:rgba(255,255,255,.5);backdrop-filter:blur(7px);border:1px solid #cfdcdb80;border-radius:14px;padding:8px 11px;color:#315e64;font-size:12px}
+@media(max-width:600px){.coaster-float-controls{top:54px;right:8px}}
