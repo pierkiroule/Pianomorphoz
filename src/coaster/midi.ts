@@ -25,7 +25,6 @@ export class CoasterMidi {
  send(data:number[],when?:number){const o=this.output;if(!o)throw Error('Aucune sortie MIDI sélectionnée');o.send(data,when);}
  panic(){
   const o=this.output;if(!o)return;
-  o.clear();
   for(let ch=0;ch<16;ch++){o.send([0xb0|ch,64,0]);o.send([0xb0|ch,123,0]);o.send([0xb0|ch,120,0]);}
  }
  disconnect(){this.panic();if(this.access){this.access.onstatechange=null;for(const i of this.access.inputs.values())i.onmidimessage=null;}this.access=null;}
@@ -42,11 +41,10 @@ export class MidiPlayer {
  play(session:MidiSession,onFinish:()=>void=()=>{}){
   if(!this.midi.output)throw Error('Sortie MIDI non connectée');
   this.stop();this.playing=true;
-  const start=performance.now()+350;
   for(const event of session.events){
    const status=event.data[0]&0xf0;
    if(status===0xf0)continue;
-   this.midi.send(event.data,start+event.t);
+   this.timers.push(window.setTimeout(()=>{if(this.playing)this.midi.send(event.data);},Math.max(0,event.t)+350));
   }
   this.timers.push(window.setTimeout(()=>{this.playing=false;onFinish();},Math.max(0,session.duration)+450));
  }
