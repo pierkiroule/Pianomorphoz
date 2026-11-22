@@ -1,130 +1,145 @@
 import {useEffect,useRef,useState} from 'react';
 import * as THREE from 'three';
 
-type Harmony={name:string;notes:number[];shape:number;twist:number;open:number;hue:number;energy:number};
-const score:Harmony[]=[
- {name:'Do majeur',notes:[48,60,64,67,72],shape:0,twist:.12,open:1.1,hue:.48,energy:.55},
- {name:'La mineur',notes:[45,57,60,64,69],shape:1,twist:-.28,open:.77,hue:.64,energy:.48},
- {name:'Fa majeur 7',notes:[53,57,60,64,69],shape:0,twist:.17,open:1.3,hue:.34,energy:.62},
- {name:'Sol suspendu',notes:[43,55,60,62,67],shape:2,twist:.65,open:1.1,hue:.55,energy:.43},
- {name:'Mi diminué',notes:[52,55,58,64,70],shape:3,twist:1.1,open:.7,hue:.77,energy:.77},
- {name:'La mineur 7',notes:[45,52,55,60,64],shape:1,twist:-.24,open:.82,hue:.64,energy:.53},
- {name:'Sol 7',notes:[43,53,59,62,67],shape:3,twist:.72,open:1,hue:.08,energy:.78},
- {name:'Do majeur',notes:[48,55,60,64,72],shape:0,twist:.12,open:1.35,hue:.48,energy:.64},
- {name:'Silence',notes:[],shape:2,twist:0,open:1.2,hue:.55,energy:0}
+const harmonies=[
+ {name:'Do majeur',open:1.25,twist:.12,fold:.15,hue:.47,energy:.72},
+ {name:'La mineur',open:.68,twist:-.42,fold:.85,hue:.66,energy:.55},
+ {name:'Fa majeur 7',open:1.42,twist:.25,fold:.26,hue:.34,energy:.76},
+ {name:'Sol suspendu',open:1.08,twist:.7,fold:.65,hue:.55,energy:.56},
+ {name:'Mi diminué',open:.66,twist:1.28,fold:1.15,hue:.78,energy:.84},
+ {name:'La mineur 7',open:.78,twist:-.36,fold:.8,hue:.65,energy:.58},
+ {name:'Sol 7',open:1.05,twist:.9,fold:.9,hue:.09,energy:.85},
+ {name:'Do majeur',open:1.48,twist:.12,fold:.12,hue:.47,energy:.84},
+ {name:'Silence',open:1.25,twist:0,fold:.12,hue:.47,energy:.08}
 ];
-const clamp=THREE.MathUtils.clamp, TAU=Math.PI*2;
-function palette(pitch:number,hue:number){
- const h=(hue+(pitch%12)*.021)%1;
- return new THREE.Color().setHSL(h,.42,.58);
+const vertex=`
+precision mediump float;
+uniform float uTime,uTravel,uOpen,uTwist,uFold,uEnergy,uIndex;
+varying vec2 vUv;
+varying float vDepth,vLight;
+void main(){
+ vUv=uv;
+ float t=uv.y;
+ float az=uIndex*1.04719755+uTwist*t*3.6+sin(t*12.0+uTime*.34+uIndex)*.23;
+ float bloom=pow(abs(sin(t*8.8-uTime*.25+uIndex*.72)),1.7);
+ float radius=(2.5+uOpen*2.3)*(1.0+.30*bloom);
+ float width=(.14+1.45*bloom+.42*uFold)*sin(3.14159265*t);
+ float wave=sin(t*25.0+uTime*.7+uIndex*2.0)*.22;
+ float fold=sin(uv.x*3.14159*2.0+t*16.0+uTime*.45)*uFold*.36;
+ float x=cos(az)*(radius+wave)+cos(az+1.57)*(uv.x-.5)*width;
+ float y=sin(az)*(radius+wave)+sin(az+1.57)*(uv.x-.5)*width+fold;
+ float z=-5.0-t*100.0;
+ x+=sin(z*.057+uTravel*.035)*1.3;
+ y+=cos(z*.046+uTravel*.02)*.9;
+ vec3 p=vec3(x,y,z);
+ vDepth=t;
+ vLight=.55+.45*sin(t*15.0+uIndex+uTime*.3);
+ gl_Position=projectionMatrix*modelViewMatrix*vec4(p,1.0);
+}`;
+const fragment=`
+precision mediump float;
+uniform float uTime,uHue,uEnergy,uIndex;
+varying vec2 vUv;
+varying float vDepth,vLight;
+vec3 hsl2rgb(vec3 c){
+ vec3 rgb=clamp(abs(mod(c.x*6.0+vec3(0.,4.,2.),6.)-3.)-1.,0.,1.);
+ rgb=rgb*rgb*(3.-2.*rgb);
+ return c.z+c.y*(rgb-.5)*(1.-abs(2.*c.z-1.));
 }
-function LivingScene({playing,quality,onStep}:{playing:boolean;quality:number;onStep:(s:number,fps:number)=>void}){
+float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
+float noise(vec2 p){
+ vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);
+ return mix(mix(hash(i),hash(i+vec2(1.,0.)),f.x),mix(hash(i+vec2(0.,1.)),hash(i+vec2(1.,1.)),f.x),f.y);
+}
+void main(){
+ float edge=abs(vUv.x-.5)*2.;
+ float grain=noise(vec2(vUv.x*19.+uIndex*7.,vUv.y*160.+uTime*.1));
+ float vein=sin(vUv.y*96.+sin(vUv.x*15.+uTime*.15)*3.);
+ float border=smoothstep(.48,.98,edge);
+ float alpha=(.13+.36*border+.13*grain+.10*vein)*(.3+.7*uEnergy);
+ alpha*=smoothstep(0.,.08,vUv.y)*(1.-smoothstep(.84,1.,vUv.y));
+ alpha*=1.-smoothstep(.35,1.,vDepth)*.75;
+ alpha*=1.-smoothstep(.90,1.,edge)*.3;
+ vec3 ink=hsl2rgb(vec3(fract(uHue+uIndex*.065),.34+.12*grain,.55+.12*vLight));
+ vec3 ivory=vec3(.985,.978,.963);
+ vec3 color=mix(ivory,ink,.58+.32*border+.12*grain);
+ gl_FragColor=vec4(color,clamp(alpha,0.,.72));
+}`;
+const buttonStyle:React.CSSProperties={border:'1px solid #d9ddd7',background:'#fffdf5dc',borderRadius:22,padding:'11px 15px',color:'#2d4444',fontWeight:600,backdropFilter:'blur(10px)'};
+function Artwork({playing,quality,onStatus}:{playing:boolean;quality:number;onStatus:(n:number,f:number)=>void}){
  const canvas=useRef<HTMLCanvasElement>(null);
- const refs=useRef({playing,quality,onStep});refs.current={playing,quality,onStep};
+ const live=useRef({playing,quality,onStatus});live.current={playing,quality,onStatus};
  useEffect(()=>{
   const el=canvas.current;if(!el)return;
-  const scene=new THREE.Scene();scene.background=new THREE.Color('#fbfaf7');
-  scene.fog=new THREE.FogExp2('#fbfaf7',.014);
-  const camera=new THREE.PerspectiveCamera(77,1,.08,170);
-  const renderer=new THREE.WebGLRenderer({canvas:el,alpha:false,antialias:false,powerPreference:'high-performance'});
+  const scene=new THREE.Scene();scene.background=new THREE.Color('#fbfaf7');scene.fog=new THREE.FogExp2('#fbfaf7',.009);
+  const camera=new THREE.PerspectiveCamera(78,1,.1,140);
+  const renderer=new THREE.WebGLRenderer({canvas:el,antialias:false,powerPreference:'high-performance'});
   renderer.outputColorSpace=THREE.SRGBColorSpace;
-  const strands:{mesh:THREE.Mesh;arr:Float32Array;mat:THREE.MeshBasicMaterial;index:number}[]=[];
-  const COUNT=12,STEPS=88;
-  for(let n=0;n<COUNT;n++){
-   const arr=new Float32Array((STEPS+1)*2*3),colors=new Float32Array(arr.length),idx:number[]=[];
-   for(let j=0;j<STEPS;j++){const k=j*2;idx.push(k,k+1,k+2,k+1,k+3,k+2);}
-   const geometry=new THREE.BufferGeometry();
-   geometry.setAttribute('position',new THREE.BufferAttribute(arr,3).setUsage(THREE.DynamicDrawUsage));
-   geometry.setAttribute('color',new THREE.BufferAttribute(colors,3).setUsage(THREE.DynamicDrawUsage));geometry.setIndex(idx);
-   const mat=new THREE.MeshBasicMaterial({vertexColors:true,side:THREE.DoubleSide,transparent:true,depthWrite:false,opacity:.8});
-   const mesh=new THREE.Mesh(geometry,mat);mesh.frustumCulled=false;scene.add(mesh);strands.push({mesh,arr,mat,index:n});
+  const surfaces:THREE.Mesh[]=[];
+  const geometry=new THREE.PlaneGeometry(1,1,9,126);
+  geometry.translate(0,.5,0);
+  const common={uTime:{value:0},uTravel:{value:0},uOpen:{value:1},uTwist:{value:0},uFold:{value:0},uEnergy:{value:.5},uHue:{value:.5}};
+  for(let i=0;i<6;i++){
+   const uniforms={...Object.fromEntries(Object.entries(common).map(([k,v])=>[k,{value:v.value}])),uIndex:{value:i}};
+   const mat=new THREE.ShaderMaterial({vertexShader:vertex,fragmentShader:fragment,uniforms,transparent:true,depthWrite:false,side:THREE.DoubleSide,blending:THREE.NormalBlending});
+   const mesh=new THREE.Mesh(geometry,mat);mesh.frustumCulled=false;scene.add(mesh);surfaces.push(mesh);
   }
-  let raf=0,last=performance.now(),time=0,travel=0,smoothed=0,frames=0,frameClock=last,fps=60;
-  const resize=()=>{const w=el.clientWidth||innerWidth,h=el.clientHeight||innerHeight;renderer.setPixelRatio(Math.min(devicePixelRatio||1,refs.current.quality));renderer.setSize(w,h,false);camera.aspect=w/h;camera.updateProjectionMatrix();};
-  resize();addEventListener('resize',resize);
-  const center=(z:number,shape:number,twist:number)=>new THREE.Vector3(Math.sin(z*.065+twist*.5)*(.85+shape*.13),Math.cos(z*.047+shape*.3)*.65+Math.sin(z*.023)*.55,z);
-  const animate=(now:number)=>{
-   raf=requestAnimationFrame(animate);
+  const filaments:THREE.Mesh[]=[];
+  const lineGeo=new THREE.PlaneGeometry(1,1,1,126);lineGeo.translate(0,.5,0);
+  for(let i=0;i<6;i++){
+   const uniforms={...Object.fromEntries(Object.entries(common).map(([k,v])=>[k,{value:v.value}])),uIndex:{value:i+.12}};
+   const mat=new THREE.ShaderMaterial({vertexShader:vertex,fragmentShader:fragment,uniforms,transparent:true,depthWrite:false,side:THREE.DoubleSide});
+   const mesh=new THREE.Mesh(lineGeo,mat);mesh.frustumCulled=false;scene.add(mesh);filaments.push(mesh);
+  }
+  let time=0,travel=0,last=performance.now(),raf=0,frames=0,frameClock=last,fps=60,lastStatus=0;
+  const resize=()=>{const w=el.clientWidth||window.innerWidth,h=el.clientHeight||window.innerHeight;renderer.setPixelRatio(Math.min(devicePixelRatio||1,live.current.quality));renderer.setSize(w,h,false);camera.aspect=w/h;camera.updateProjectionMatrix();};
+  resize();window.addEventListener('resize',resize);
+  const render=(now:number)=>{
+   raf=requestAnimationFrame(render);
    const dt=Math.min(.04,(now-last)/1000);last=now;
-   if(refs.current.playing)time+=dt;
-   const beat=3.5;const slot=Math.floor(time/beat)%score.length;const next=(slot+1)%score.length;
-   const phase=(time%beat)/beat;
-   const ease=(v:number)=>v*v*(3-2*v);
-   const mix=ease(clamp((phase-.65)/.35,0,1));
-   const a=score[slot],b=score[next];
-   const open=THREE.MathUtils.lerp(a.open,b.open,mix);
-   const twist=THREE.MathUtils.lerp(a.twist,b.twist,mix);
-   const shape=THREE.MathUtils.lerp(a.shape,b.shape,mix);
-   const energy=THREE.MathUtils.lerp(a.energy,b.energy,mix);
-   const notes=new Set([...a.notes,...b.notes].map(n=>n%12));
-   smoothed+=(energy-smoothed)*Math.min(1,dt*2.5);
-   travel+=dt*(2.4+smoothed*2.1)*(refs.current.playing?1:.16);
-   const zCam=-travel,cc=center(zCam,shape,twist),look=center(zCam-8,shape,twist);
-   camera.position.lerp(new THREE.Vector3(cc.x,cc.y,zCam+1.3),Math.min(1,dt*3.3));
-   camera.lookAt(look);
-   camera.rotation.z=Math.sin(zCam*.05+twist)*.055;
-   for(const s of strands){
-    const n=s.index,pa=a.notes.filter(p=>p%12===n),pb=b.notes.filter(p=>p%12===n);
-    const weight=THREE.MathUtils.lerp(pa.length?1:0,pb.length?1:0,mix);
-    const isOn=notes.has(n)&&weight>.008;
-    s.mesh.visible=isOn;
-    if(!isOn)continue;
-    const pitch=(pa[0]??pb[0]??60);
-    const base=palette(pitch,THREE.MathUtils.lerp(a.hue,b.hue,mix));
-    const bright=base.clone().lerp(new THREE.Color('#fff4df'),.16+smoothed*.18);
-    const glow=weight*(.35+.65*smoothed);
-    s.mat.opacity=clamp(.15+glow*.68,0,.94);
-    const theta=n/COUNT*TAU;
-    for(let j=0;j<=STEPS;j++){
-     const f=j/STEPS,z=zCam-2-f*92;
-     const bend=theta+twist*f*2.8+Math.sin(f*7+time*.28+n*.6)*.12;
-     const c=center(z,shape,twist);
-     const radius=(1.6+open*1.12)*(1+.11*Math.sin(f*TAU*2+time*.35+n));
-     const wobble=.08*Math.sin(f*21+time*1.3+n*1.7);
-     const x=c.x+Math.cos(bend)*(radius+wobble),y=c.y+Math.sin(bend)*(radius+wobble);
-     const gaps=Math.sin(f*TAU*(4+n%3)+n*2.6);
-     const visible=gaps>-.62?1:0;
-     const feather=Math.pow(Math.sin(Math.PI*f),.5);
-     const width=(.009+.045*glow)*feather*visible*(1+.24*Math.sin(f*35+n));
-     const k=j*6;
-     s.arr[k]=x-Math.sin(bend)*width;s.arr[k+1]=y+Math.cos(bend)*width;s.arr[k+2]=z;
-     s.arr[k+3]=x+Math.sin(bend)*width;s.arr[k+4]=y-Math.cos(bend)*width;s.arr[k+5]=z;
-     const color=bright.clone().multiplyScalar(.7+.3*Math.sin(f*9+time*.8+n)**2);
-     const colors=s.mesh.geometry.getAttribute('color') as THREE.BufferAttribute;
-     for(let q=0;q<2;q++){colors.setXYZ(j*2+q,color.r,color.g,color.b);}
-    }
-    s.mesh.geometry.attributes.position.needsUpdate=true;
-    s.mesh.geometry.attributes.color.needsUpdate=true;
+   if(live.current.playing){time+=dt;travel+=dt*2.2;}
+   const duration=4.1,idx=Math.floor(time/duration)%harmonies.length;
+   const phase=(time%duration)/duration;
+   const smooth=(v:number)=>v*v*(3-2*v);
+   const blend=smooth(THREE.MathUtils.clamp((phase-.62)/.38,0,1));
+   const a=harmonies[idx],b=harmonies[(idx+1)%harmonies.length];
+   const lerp=(key:keyof typeof a)=>THREE.MathUtils.lerp(a[key] as number,b[key] as number,blend);
+   const camZ=-travel;
+   camera.position.set(Math.sin(camZ*.055)*1.3,Math.cos(camZ*.044)*.9,camZ);
+   camera.lookAt(Math.sin((camZ-11)*.055)*1.3,Math.cos((camZ-11)*.044)*.9,camZ-11);
+   camera.rotation.z=Math.sin(camZ*.035)*.075;
+   for(const mesh of [...surfaces,...filaments]){
+    const u=(mesh.material as THREE.ShaderMaterial).uniforms;
+    u.uTime.value=time;u.uTravel.value=travel;u.uOpen.value=lerp('open');
+    u.uTwist.value=lerp('twist');u.uFold.value=lerp('fold');u.uEnergy.value=lerp('energy');
+    u.uHue.value=lerp('hue');
+    mesh.position.z=camZ;
    }
    renderer.render(scene,camera);
    frames++;if(now-frameClock>1000){fps=Math.round(frames*1000/(now-frameClock));frames=0;frameClock=now;}
-   if(Math.floor(now/250)!==Math.floor((now-dt*1000)/250))refs.current.onStep(slot,fps);
+   if(now-lastStatus>300){lastStatus=now;live.current.onStatus(idx,fps);}
   };
-  raf=requestAnimationFrame(animate);
-  return()=>{cancelAnimationFrame(raf);removeEventListener('resize',resize);for(const s of strands){s.mesh.geometry.dispose();s.mat.dispose();}renderer.dispose();};
+  raf=requestAnimationFrame(render);
+  return()=>{cancelAnimationFrame(raf);window.removeEventListener('resize',resize);geometry.dispose();lineGeo.dispose();for(const mesh of [...surfaces,...filaments])(mesh.material as THREE.Material).dispose();renderer.dispose();};
  },[]);
  return <canvas ref={canvas} style={{position:'absolute',inset:0,width:'100%',height:'100%',display:'block'}}/>;
 }
 export default function Prototype(){
- const [playing,setPlaying]=useState(true),[step,setStep]=useState(0),[fps,setFps]=useState(0),[quality,setQuality]=useState(1.25),[info,setInfo]=useState(false);
- return <main style={{position:'fixed',inset:0,background:'#fbfaf7',color:'#283b3a',fontFamily:'system-ui,sans-serif',overflow:'hidden'}}>
-  <LivingScene playing={playing} quality={quality} onStep={(s,f)=>{setStep(s);setFps(f);}}/>
-  <div style={{position:'absolute',top:16,left:18,right:18,display:'flex',justifyContent:'space-between',alignItems:'start',pointerEvents:'none'}}>
-   <div style={{background:'#fbfaf7b8',padding:'8px 12px',borderRadius:16,backdropFilter:'blur(8px)'}}><div style={{fontSize:12,letterSpacing:2,fontWeight:700}}>PIANO ROLL COASTER •°</div><div style={{fontSize:11,opacity:.7}}>Laboratoire morphogenèse musicale</div></div>
-   <div style={{background:'#fbfaf7b8',padding:'8px 12px',borderRadius:16,fontSize:12}}>{fps} FPS</div>
+ const [playing,setPlaying]=useState(true),[quality,setQuality]=useState(1),[step,setStep]=useState(0),[fps,setFps]=useState(0),[settings,setSettings]=useState(false);
+ return <main style={{position:'fixed',inset:0,overflow:'hidden',background:'#fbfaf7',fontFamily:'system-ui,sans-serif',color:'#293d3d'}}>
+  <Artwork playing={playing} quality={quality} onStatus={(s,f)=>{setStep(s);setFps(f);}}/>
+  <div style={{position:'absolute',top:16,left:16,right:16,display:'flex',justifyContent:'space-between',pointerEvents:'none'}}>
+   <div style={{background:'#fffdf5b9',padding:'9px 13px',borderRadius:15,backdropFilter:'blur(9px)'}}><strong style={{fontSize:12,letterSpacing:1.6}}>PIANO ROLL COASTER •°</strong><div style={{fontSize:11,opacity:.7}}>Architecture d'aquarelle vivante · V2</div></div>
+   <div style={{fontSize:12,background:'#fffdf5c8',borderRadius:14,padding:11}}>{fps} FPS</div>
   </div>
-  <div style={{position:'absolute',bottom:20,left:16,right:16,display:'flex',alignItems:'center',justifyContent:'space-between',gap:10}}>
-   <div style={{background:'#fbfaf7c9',backdropFilter:'blur(12px)',padding:'11px 14px',borderRadius:20,minWidth:120}}><div style={{fontSize:10,opacity:.65}}>HARMONIE</div><strong style={{fontSize:14}}>{score[step]?.name}</strong></div>
-   <div style={{display:'flex',gap:8}}>
-    <button onClick={()=>setPlaying(p=>!p)} style={btn}>{playing?'Ⅱ Pause':'▶ Voyage'}</button>
-    <button onClick={()=>setInfo(v=>!v)} style={btn}>⚙</button>
-   </div>
+  <div style={{position:'absolute',bottom:18,left:16,right:16,display:'flex',alignItems:'center',justifyContent:'space-between',gap:10}}>
+   <div style={{borderRadius:18,background:'#fffdf5ce',padding:'10px 14px',backdropFilter:'blur(10px)'}}><div style={{fontSize:10,opacity:.6}}>HARMONIE</div><strong style={{fontSize:14}}>{harmonies[step]?.name}</strong></div>
+   <div style={{display:'flex',gap:8}}><button style={buttonStyle} onClick={()=>setPlaying(v=>!v)}>{playing?'Ⅱ Pause':'▶ Voyage'}</button><button style={buttonStyle} onClick={()=>setSettings(v=>!v)}>⚙</button></div>
   </div>
-  {info&&<div style={{position:'absolute',right:16,bottom:85,background:'#fffef0ed',padding:18,borderRadius:18,width:250,boxShadow:'0 12px 45px #3452'}}>
-   <strong>Prototype visuel</strong><p style={{fontSize:12,lineHeight:1.5}}>Séquence harmonique simulée. 12 fibres réutilisées, trajectoire FPV, morphologies par accords. Sans MIDI, audio ni enregistrement.</p>
-   <label style={{fontSize:12}}>Résolution GPU : {quality.toFixed(2)}×<input style={{width:'100%'}} type="range" min=".65" max="1.5" step=".05" value={quality} onChange={e=>setQuality(Number(e.target.value))}/></label>
-   <button style={{...btn,marginTop:8}} onClick={()=>setInfo(false)}>Fermer</button>
+  {settings&&<div style={{position:'absolute',right:16,bottom:82,width:250,background:'#fffdf5ed',borderRadius:17,padding:18,boxShadow:'0 8px 35px #3452'}}>
+   <strong>Laboratoire V2</strong><p style={{fontSize:12,lineHeight:1.6}}>6 voiles aquarelle, 6 filaments, morphogenèse harmonique. Géométrie statique déformée par shaders GPU. Séquence simulée, sans MIDI ni audio.</p>
+   <label style={{fontSize:12}}>Résolution : {quality.toFixed(2)}×<input style={{width:'100%'}} type="range" min=".6" max="1.5" step=".05" value={quality} onChange={e=>setQuality(Number(e.target.value))}/></label>
+   <button style={{...buttonStyle,marginTop:10}} onClick={()=>setSettings(false)}>Fermer</button>
   </div>}
  </main>;
 }
-const btn:React.CSSProperties={border:'1px solid #dae1dc',borderRadius:25,background:'#ffffffd9',color:'#244441',padding:'12px 17px',fontWeight:650,fontSize:13,backdropFilter:'blur(10px)'};
