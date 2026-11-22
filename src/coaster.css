@@ -2,3 +2,19 @@
 .coaster-toggle{position:absolute;right:14px;top:70px;z-index:8;padding:9px 13px;border:1px solid #cfdcdb;border-radius:16px;background:#fffffff0;color:#315e64;font-size:12px;box-shadow:0 4px 20px #63717c20}
 .coaster-render-error{position:absolute;top:110px;right:14px;z-index:10;max-width:280px;padding:12px;border-radius:12px;background:#fff0ed;color:#8c2d28;font-size:12px}
 @media(max-width:600px){.coaster-toggle{top:63px;right:12px}.coaster-render-error{top:110px;left:12px;right:12px;max-width:none}}
+
+/* Animation-first interface: translucent, compact and unobtrusive. */
+.coaster-header{z-index:3;padding:10px 12px;align-items:center;background:linear-gradient(#fffefa80,#fffefa00);pointer-events:none}
+.coaster-header strong{font-size:clamp(15px,3.5vw,21px)}
+.coaster-header small{font-size:9px}
+.coaster-status{font-size:10px;max-width:38%}
+.coaster-nav{bottom:calc(8px + env(safe-area-inset-bottom));padding:3px;gap:2px;border-color:#dce4e480;background:rgba(255,255,255,.5);box-shadow:0 4px 20px #5d7c8514;backdrop-filter:blur(7px)}
+.coaster-nav button{padding:8px 9px;font-size:11px}
+.coaster-nav .selected{background:rgba(220,234,233,.65)}
+.coaster-panel{z-index:4;background:rgba(255,255,255,.5);backdrop-filter:blur(9px);border-color:#e1e7e780;box-shadow:0 6px 25px #63717c12;padding:12px;border-radius:16px;width:min(310px,calc(100vw - 24px));max-height:calc(100% - 160px)}
+.coaster-panel h2{font-size:16px}.coaster-panel h3{margin:14px 0 6px}
+.coaster-panel p{line-height:1.4}
+.coaster-toggle{background:rgba(255,255,255,.5);backdrop-filter:blur(7px);border-color:#cfdcdb80;top:60px;z-index:9}
+.coaster-panel button{background:rgba(255,255,255,.65)}
+.coaster-panel button.primary{background:rgba(49,94,100,.85)}
+@media(max-width:600px){.coaster-panel{bottom:calc(59px + env(safe-area-inset-bottom));max-height:35vh;top:auto;padding:10px}.coaster-nav button{padding:7px 8px;font-size:10px}.coaster-toggle{top:55px;right:8px}.coaster-header{padding:9px 10px}.coaster-header small{display:none}}
