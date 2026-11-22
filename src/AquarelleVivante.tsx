@@ -10,8 +10,8 @@ const STATES=[
 ];
 const N=240;
 const buttonStyle:React.CSSProperties={border:'1px solid #cbd4d0',background:'#fffdf6e8',borderRadius:20,padding:'10px 13px',color:'#284044',fontWeight:600};
-function PixelField({playing,onStats}:{playing:boolean;onStats:(step:number,fps:number)=>void}){
- const canvas=useRef<HTMLCanvasElement>(null);
+function PixelField({playing,onStats,canvasRef,musicRef}:{playing:boolean;onStats:(step:number,fps:number)=>void;canvasRef:React.RefObject<HTMLCanvasElement|null>;musicRef:React.RefObject<{notes:Map<number,number>;pedal:boolean;last:number;connected:boolean}>}){
+ const canvas=canvasRef;
  const playingRef=useRef(playing);playingRef.current=playing;
  const statsRef=useRef(onStats);statsRef.current=onStats;
  useEffect(()=>{
@@ -43,7 +43,16 @@ function PixelField({playing,onStats}:{playing:boolean;onStats:(step:number,fps:
    raf=requestAnimationFrame(draw);
    const dt=Math.min(.05,(now-last)/1000);last=now;
    if(playingRef.current)elapsed+=dt;
-   const step=Math.floor(elapsed/7)%STATES.length,state=STATES[step];
+   const active=[...musicRef.current.notes.entries()];
+   const pitches=active.map(([n])=>n),velocity=active.reduce((sum,[,v])=>sum+v,0)/Math.max(1,active.length)/127;
+   const root=pitches.length?Math.min(...pitches)%12:0;
+   const intervals=new Set(pitches.map(n=>(n-root+120)%12));
+   const major=intervals.has(4)&&intervals.has(7),minor=intervals.has(3)&&intervals.has(7);
+   const diminished=intervals.has(3)&&intervals.has(6),suspended=(intervals.has(5)||intervals.has(2))&&!major&&!minor;
+   const midiStep=major?0:minor?1:diminished?3:suspended?2:pitches.length?4:5;
+   const step=musicRef.current.connected?midiStep:Math.floor(elapsed/7)%STATES.length;
+   const state=STATES[step];
+   const energy=musicRef.current.connected?Math.min(1,velocity+.12*active.length):.42;
    if(playingRef.current){
     for(let iteration=0;iteration<2;iteration++){
      for(let y=1;y<N-1;y++)for(let x=1;x<N-1;x++){
@@ -51,13 +60,14 @@ function PixelField({playing,onStats}:{playing:boolean;onStats:(step:number,fps:
       const lapA=-aa+.2*(a[i-1]+a[i+1]+a[i-N]+a[i+N])+.05*(a[i-N-1]+a[i-N+1]+a[i+N-1]+a[i+N+1]);
       const lapB=-bb+.2*(b[i-1]+b[i+1]+b[i-N]+b[i+N])+.05*(b[i-N-1]+b[i-N+1]+b[i+N-1]+b[i+N+1]);
       const reaction=aa*bb*bb;
-      nextA[i]=Math.max(0,Math.min(1,aa+.98*lapA-reaction+state.feed*(1-aa)));
+      nextA[i]=Math.max(0,Math.min(1,aa+.98*lapA-reaction+(state.feed+energy*.003)*(1-aa)));
       nextB[i]=Math.max(0,Math.min(1,bb+.48*lapB+reaction-(state.kill+state.feed)*bb));
      }
      [a,nextA]=[nextA,a];[b,nextB]=[nextB,b];
     }
-    if(frame%16===0){
-     const theta=elapsed*.48,px=Math.floor(N*(.5+.26*Math.cos(theta))),py=Math.floor(N*(.5+.26*Math.sin(theta*1.3)));
+    if(frame%(musicRef.current.connected?Math.max(5,Math.round(22-energy*17)):16)===0){
+     const theta=elapsed*.48,angle=musicRef.current.connected?(root/12*Math.PI*2+elapsed*.1):theta;
+     const px=Math.floor(N*(.5+.26*Math.cos(angle))),py=Math.floor(N*(.5+.26*Math.sin(angle*1.3)));
      for(let dy=-3;dy<=3;dy++)for(let dx=-3;dx<=3;dx++){
       const x=px+dx,y=py+dy;if(x>1&&x<N-2&&y>1&&y<N-2&&dx*dx+dy*dy<12)b[y*N+x]=.95;
      }
@@ -124,15 +134,58 @@ function PixelField({playing,onStats}:{playing:boolean;onStats:(step:number,fps:
 }
 export default function Prototype(){
  const [playing,setPlaying]=useState(true),[step,setStep]=useState(0),[fps,setFps]=useState(0);
+ const [midiStatus,setMidiStatus]=useState('Démo automatique'),[recording,setRecording]=useState(false),[recorded,setRecorded]=useState('');
+ const canvasRef=useRef<HTMLCanvasElement>(null);
+ const musicRef=useRef({notes:new Map<number,number>(),pedal:false,last:0,connected:false});
+ const midiAccessRef=useRef<MIDIAccess|null>(null),recorderRef=useRef<MediaRecorder|null>(null),streamRef=useRef<MediaStream|null>(null);
+ useEffect(()=>()=>{if(recorded)URL.revokeObjectURL(recorded);},[recorded]);
+ useEffect(()=>()=>{midiAccessRef.current?.inputs.forEach(input=>{input.onmidimessage=null;});if(recorderRef.current?.state==='recording')recorderRef.current.stop();streamRef.current?.getTracks().forEach(t=>t.stop());},[]);
+ async function connectMidi(){
+  try{
+   if(!navigator.requestMIDIAccess)throw Error('Web MIDI indisponible. Utiliser Chrome ou Edge.');
+   const access=await navigator.requestMIDIAccess();midiAccessRef.current=access;
+   const bind=()=>{
+    let count=0;
+    access.inputs.forEach(input=>{count++;input.onmidimessage=(event)=>{
+     const data=event.data;if(!data)return;
+     const command=data[0]&240,n=data[1],v=data[2];
+     if(command===144&&v>0)musicRef.current.notes.set(n,v);
+     if(command===128||(command===144&&v===0))musicRef.current.notes.delete(n);
+     if(command===176&&n===64)musicRef.current.pedal=v>=64;
+     musicRef.current.last=performance.now();
+    };});
+    musicRef.current.connected=count>0;setMidiStatus(count?count+' entrée(s) MIDI active(s)':'Aucune entrée MIDI détectée');
+   };bind();access.onstatechange=bind;
+  }catch(error){setMidiStatus(String(error));}
+ }
+ async function toggleRecording(){
+  if(recorderRef.current?.state==='recording'){recorderRef.current.stop();setRecording(false);return;}
+  try{
+   if(!canvasRef.current?.captureStream||!window.MediaRecorder)throw Error('Enregistrement vidéo indisponible');
+   const video=canvasRef.current.captureStream(30);
+   // Optional microphone capture. Never play captured audio back to speakers.
+   let audio:MediaStream|null=null;
+   try{audio=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}});}catch{setMidiStatus(s=>s+' · vidéo sans son');}
+   const stream=new MediaStream([...video.getVideoTracks(),...(audio?.getAudioTracks()||[])]);
+   streamRef.current=stream;
+   const mime=['video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm'].find(x=>MediaRecorder.isTypeSupported(x));
+   const recorder=new MediaRecorder(stream,mime?{mimeType:mime}:undefined),chunks:BlobPart[]=[];
+   recorder.ondataavailable=e=>{if(e.data.size)chunks.push(e.data);};
+   recorder.onstop=()=>{const blob=new Blob(chunks,{type:recorder.mimeType||'video/webm'});const url=URL.createObjectURL(blob);setRecorded(old=>{if(old)URL.revokeObjectURL(old);return url;});stream.getTracks().forEach(t=>t.stop());streamRef.current=null;setRecording(false);};
+   recorderRef.current=recorder;recorder.start(1000);setRecording(true);
+  }catch(error){setMidiStatus('Enregistrement : '+String(error));setRecording(false);}
+ }
  return <main style={{position:'fixed',inset:0,overflow:'hidden',background:'#faf8f1',fontFamily:'system-ui,sans-serif',color:'#284044'}}>
-  <PixelField playing={playing} onStats={(s,f)=>{setStep(s);setFps(f);}}/>
+  <PixelField playing={playing} canvasRef={canvasRef} musicRef={musicRef} onStats={(s,f)=>{setStep(s);setFps(f);}}/>
   <div style={{position:'absolute',top:14,left:14,right:14,display:'flex',justifyContent:'space-between',pointerEvents:'none'}}>
    <div style={{padding:'10px 13px',borderRadius:15,background:'#fffdf6e0'}}><strong style={{fontSize:12,letterSpacing:1}}>AQUARELLE VIVANTE •°</strong><div style={{fontSize:11,opacity:.7}}>V7 · matière organique résonante</div></div>
    <div style={{fontSize:12,padding:11,borderRadius:15,background:'#fffdf6e0'}}>{fps} FPS</div>
   </div>
   <div style={{position:'absolute',bottom:16,left:14,right:14,display:'flex',alignItems:'center',justifyContent:'space-between',gap:10}}>
-   <div style={{background:'#fffdf6ed',borderRadius:15,padding:'10px 13px'}}><div style={{fontSize:10,opacity:.6}}>HARMONIE SIMULÉE</div><strong style={{fontSize:13}}>{STATES[step].name}</strong></div>
-   <button style={buttonStyle} onClick={()=>setPlaying(v=>!v)}>{playing?'Ⅱ Pause':'▶ Reprendre'}</button>
+   <div style={{background:'#fffdf6ed',borderRadius:15,padding:'10px 13px'}}><div style={{fontSize:10,opacity:.6}}>{musicRef.current.connected?'HARMONIE MIDI':'HARMONIE SIMULÉE'}</div><strong style={{fontSize:13}}>{STATES[step].name}</strong></div>
+   <div style={{display:'flex',gap:6,flexWrap:'wrap',justifyContent:'flex-end'}}><button style={buttonStyle} onClick={connectMidi}>MIDI</button><button style={buttonStyle} onClick={toggleRecording}>{recording?'■ Stop vidéo':'● Vidéo'}</button><button style={buttonStyle} onClick={()=>setPlaying(v=>!v)}>{playing?'Ⅱ':'▶'}</button></div>
   </div>
+  <div style={{position:'absolute',top:70,left:14,fontSize:11,background:'#fffdf6d9',padding:'5px 9px',borderRadius:10}}>{midiStatus}</div>
+  {recorded&&<a href={recorded} download={'aquarelle-vivante-'+Date.now()+'.webm'} style={{position:'absolute',top:105,left:14,...buttonStyle,textDecoration:'none',fontSize:12}}>Télécharger la vidéo WebM</a>}
  </main>;
 }
