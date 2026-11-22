@@ -227,6 +227,17 @@ export default function Prototype(){
   const next={filter:preset.filter,intensity:preset.intensity,autonomy:preset.autonomy,memory:preset.memory,blend:preset.blend};
   livingRef.current=next;setLiving(next);
  }
+ function captureImage(){
+  const canvas=canvasRef.current;if(!canvas)return;
+  const stamp=new Date().toISOString().replace(/[:.]/g,'-');
+  canvas.toBlob(blob=>{
+   if(!blob){setRecordStatus('Impossible de capturer cette image');return;}
+   const url=URL.createObjectURL(blob);
+   const a=document.createElement('a');a.href=url;a.download='pianomorphoz-'+stamp+'.png';
+   document.body.appendChild(a);a.click();a.remove();
+   window.setTimeout(()=>URL.revokeObjectURL(url),30000);
+  },'image/png');
+ }
  function updateLiving(patch:Partial<LivingSettings>){const next={...livingRef.current,...patch};livingRef.current=next;setLiving(next);}
  useEffect(()=>()=>{if(captureClock.current!==null)clearInterval(captureClock.current);},[]);
  useEffect(()=>{void loadSessions().then(setSessions).catch(e=>setRecordStatus(String(e)));},[]);
@@ -327,6 +338,7 @@ export default function Prototype(){
   </div>}
   {uiVisible&&<div style={{position:'absolute',bottom:'max(12px,env(safe-area-inset-bottom))',left:'50%',transform:'translateX(-50%)',display:'flex',alignItems:'center',gap:6,zIndex:8,background:'#fffdf6ce',backdropFilter:'blur(16px)',border:'1px solid #d5dbd4',padding:6,borderRadius:28,boxShadow:'0 6px 24px #20322a20',maxWidth:'calc(100vw - 20px)'}}>
    <button style={{...buttonStyle,padding:'9px 12px'}} onClick={()=>setPanel(v=>!v)} aria-label="Réglages du studio" title="Atelier et réglages">☷ Atelier</button>
+   <button style={{...buttonStyle,padding:'9px 12px'}} onClick={captureImage} aria-label="Capturer une image PNG" title="Photo instantanée PNG">▣ Photo</button>
    <button style={{...buttonStyle,padding:'9px 12px'}} onClick={()=>setPlaying(v=>!v)} aria-label={playing?'Pause':'Lecture'}>{playing?'Ⅱ':'▶'}</button>
    <button style={{...buttonStyle,padding:'9px 12px',color:recording?'#a71935':undefined}} onClick={toggleRecording} aria-label={recording?'Arrêter la vidéo':'Enregistrer une vidéo'}>{recording?'■ Stop':'● REC'}</button>
    {recorded&&!recording&&<button style={{...buttonStyle,padding:'9px 12px'}} onClick={()=>setPreviewOpen(true)} title="Prévisualiser la dernière capture">▶ Voir</button>}
@@ -354,7 +366,7 @@ export default function Prototype(){
     <label style={{display:'block',marginTop:12}}>Palette<select style={{width:'100%'}} value={palette} onChange={e=>{const v=Number(e.target.value);setPalette(v);paletteRef.current=v;}}>{PALETTES.map((p,i)=><option key={p.name} value={i}>{p.name}</option>)}</select></label>
     <label style={{display:'block',marginTop:12}}>Détails · {Math.round(detail*100)} %<input style={{width:'100%'}} type='range' min='.2' max='1' step='.1' value={detail} onChange={e=>{const v=Number(e.target.value);setDetail(v);detailRef.current=v;}}/></label>
    </details>
-   <button style={{...buttonStyle,marginTop:12}} onClick={()=>{const a=document.createElement('a');a.href=canvasRef.current?.toDataURL('image/png')||'';a.download='pianomorphoz-aquarelle.png';a.click();}}>Exporter PNG</button>
+   <button style={{...buttonStyle,marginTop:12}} onClick={captureImage}>Exporter PNG</button>
    <h3>Production audiovisuelle</h3>
    <p>Sélectionner l'entrée audio USB ou le micro. Puis utiliser « Vidéo » pour enregistrer l'image et le son ensemble.</p>
    <button style={buttonStyle} onClick={selectAudio}>Choisir la source audio</button>
