@@ -1,12 +1,12 @@
 import * as THREE from 'three';
-import type {MidiEvent,MidiSession} from './midi';
+import type {MidiSession} from './midi';
 const TAU=Math.PI*2;
 export class FiberCoaster {
  private scene=new THREE.Scene();private camera=new THREE.PerspectiveCamera(72,1,.05,250);
  private renderer:THREE.WebGLRenderer;private fibers:THREE.Line[]=[];private materials:THREE.LineBasicMaterial[]=[];
  private activity=new Float32Array(88);private sustain=new Uint8Array(16);private active=new Map<string,number>();
  private session:MidiSession|null=null;private index=0;private time=0;private last=0;private raf=0;private running=true;private playing=false;
- private seed=113;private speed=1;private duration=0;private origin=0;
+ private speed=1;private duration=0;private origin=0;onTime:(ms:number,playing:boolean)=>void=()=>{};
  constructor(private canvas:HTMLCanvasElement){
   this.renderer=new THREE.WebGLRenderer({canvas,antialias:true,powerPreference:'high-performance'});
   this.renderer.setClearColor('#fffefa');
@@ -33,17 +33,17 @@ export class FiberCoaster {
   if(cmd===0x80||(cmd===0x90&&v===0)){this.active.delete(key);}
   if(cmd===0xb0&&n===64)this.sustain[ch]=v>=64?1:0;
  }
- setSession(session:MidiSession|null){this.session=session;this.duration=session?.duration||0;this.seed=session?.seed||113;this.seek(0);}
+ setSession(session:MidiSession|null){this.session=session;this.duration=session?.duration||0;this.pause();this.seek(0);}
  seek(ms:number){
-  this.time=Math.max(0,Math.min(ms,this.duration));this.index=0;this.activity.fill(0);this.active.clear();this.sustain.fill(0);
+  this.time=Math.max(0,Math.min(ms,this.duration));this.index=0;this.origin=performance.now()-this.time;this.activity.fill(0);this.active.clear();this.sustain.fill(0);
   if(this.session){while(this.index<this.session.events.length&&this.session.events[this.index].t<=this.time){this.note(this.session.events[this.index].data);this.index++;}}
  }
- play(){this.playing=true;this.origin=performance.now()-this.time;}
+ play(){if(!this.session||!this.duration)return;if(this.time>=this.duration)this.seek(0);this.playing=true;this.origin=performance.now()-this.time;}
  pause(){this.playing=false;}
  private loop=(now:number)=>{
   if(!this.running)return;this.raf=requestAnimationFrame(this.loop);
   const dt=Math.min(.05,(now-(this.last||now))/1000);this.last=now;
-  if(this.playing&&this.session){const target=Math.min(this.duration,now-this.origin);while(this.index<this.session.events.length&&this.session.events[this.index].t<=target){this.note(this.session.events[this.index].data);this.index++;}this.time=target;if(target>=this.duration)this.playing=false;}
+  if(this.playing&&this.session){const target=Math.min(this.duration,now-this.origin);while(this.index<this.session.events.length&&this.session.events[this.index].t<=target){this.note(this.session.events[this.index].data);this.index++;}this.time=target;if(target>=this.duration)this.playing=false;this.onTime(this.time,this.playing);}
   for(let i=0;i<88;i++){
    const held=[...this.active].some(([k])=>Number(k.split(':')[1])===i+21);
    const a=this.activity[i];this.activity[i]=held?Math.max(a,.28):Math.max(0,a-dt*.22);
