@@ -13,15 +13,15 @@ const STATES=[
 ];
 const N=240;
 const FILTERS=['Osmose','Capillarité','Floraison','Cristallisation','Rémanence','Iridescence'];
+type LivingSettings={filter:number;intensity:number;autonomy:number;memory:number;blend:boolean};
+const DEFAULT_LIVING:LivingSettings={filter:0,intensity:.68,autonomy:.55,memory:.7,blend:true};
+const PALETTES=[{name:'Sépia botanique',paper:[250,248,242],ink:[38,58,60]},{name:'Bleu de Prusse',paper:[248,250,249],ink:[17,49,91]},{name:'Garance',paper:[252,248,245],ink:[110,35,57]},{name:'Forêt',paper:[248,250,245],ink:[34,75,57]},{name:'Noir sumi-e',paper:[251,250,247],ink:[23,25,29]}];
 PALETTES.push(
  {name:'Lagune',paper:[248,250,247],ink:[19,80,109]},
  {name:'Corail vivant',paper:[252,247,243],ink:[176,56,65]},
  {name:'Forêt cellulaire',paper:[248,249,243],ink:[36,91,59]},
  {name:'Sumi-e précieux',paper:[250,249,246],ink:[23,26,30]}
 );
-type LivingSettings={filter:number;intensity:number;autonomy:number;memory:number;blend:boolean};
-const DEFAULT_LIVING:LivingSettings={filter:0,intensity:.68,autonomy:.55,memory:.7,blend:true};
-const PALETTES=[{name:'Sépia botanique',paper:[250,248,242],ink:[38,58,60]},{name:'Bleu de Prusse',paper:[248,250,249],ink:[17,49,91]},{name:'Garance',paper:[252,248,245],ink:[110,35,57]},{name:'Forêt',paper:[248,250,245],ink:[34,75,57]},{name:'Noir sumi-e',paper:[251,250,247],ink:[23,25,29]}];
 const buttonStyle:React.CSSProperties={border:'1px solid #cbd4d0',background:'#fffdf6e8',borderRadius:20,padding:'10px 13px',color:'#284044',fontWeight:600};
 function PixelField({playing,onStats,canvasRef,musicRef,paletteRef,detailRef,livingRef}:{playing:boolean;onStats:(step:number,fps:number)=>void;canvasRef:React.RefObject<HTMLCanvasElement|null>;musicRef:React.RefObject<{notes:Map<number,number>;pedal:boolean;last:number;connected:boolean}>;paletteRef:React.RefObject<number>;detailRef:React.RefObject<number>;livingRef:React.RefObject<LivingSettings>}){
  const canvas=canvasRef;
